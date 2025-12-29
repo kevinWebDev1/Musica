@@ -1,4 +1,4 @@
-# Music You
+# Musica
 
 An Android application for streaming music from YouTube Music.
 

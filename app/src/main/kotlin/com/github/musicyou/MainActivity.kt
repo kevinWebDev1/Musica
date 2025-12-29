@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -60,6 +61,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.github.musicyou.sync.SyncPreferences
+import com.github.musicyou.ui.components.NameEntryDialog
 
 class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
@@ -95,6 +98,18 @@ class MainActivity : ComponentActivity() {
             val playerState = rememberStandardBottomSheetState(
                 initialValue = SheetValue.Hidden,
                 confirmValueChange = { value ->
+                    // Check if participant is locked (sync active + not host + host-only mode)
+                    val sessionState = binder?.sessionManager?.sessionState?.value
+                    val isParticipantLocked = sessionState?.sessionId != null &&
+                                               sessionState.isHost == false &&
+                                               sessionState.hostOnlyMode == true
+                    
+                    // Block collapse/hide for locked participants
+                    if (isParticipantLocked && (value == SheetValue.Hidden || value == SheetValue.PartiallyExpanded)) {
+                        android.util.Log.d("MusicSync", "MainActivity: Blocking player dismiss (Host-Only Mode)")
+                        return@rememberStandardBottomSheetState false
+                    }
+                    
                     if (value == SheetValue.Hidden) {
                         binder?.stopRadio()
                         binder?.player?.clearMediaItems()
@@ -104,6 +119,18 @@ class MainActivity : ComponentActivity() {
                 },
                 skipHiddenState = false
             )
+
+            // Check if user name is set - show dialog if not
+            var showNameDialog by remember { mutableStateOf(!SyncPreferences.hasUserName(this@MainActivity)) }
+            
+            if (showNameDialog) {
+                NameEntryDialog(
+                    onNameEntered = { name ->
+                        SyncPreferences.setUserName(this@MainActivity, name)
+                        showNameDialog = false
+                    }
+                )
+            }
 
             AppTheme {
                 Box(modifier = Modifier.fillMaxSize()) {

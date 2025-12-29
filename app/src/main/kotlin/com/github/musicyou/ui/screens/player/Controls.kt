@@ -134,7 +134,7 @@ fun Controls(
                 }
             },
             onDragEnd = {
-                scrubbingPosition?.let(binder.player::seekTo)
+                scrubbingPosition?.let { binder.syncSeekTo(it) }
                 scrubbingPosition = null
             },
             color = MaterialTheme.colorScheme.primary,
@@ -205,7 +205,7 @@ fun Controls(
             }
 
             IconButton(
-                onClick = binder.player::forceSeekToPrevious,
+                onClick = { binder.syncSkipPrevious() },
                 modifier = Modifier.weight(1F)
             ) {
                 Icon(
@@ -222,14 +222,9 @@ fun Controls(
             FilledIconButton(
                 onClick = {
                     if (shouldBePlaying) {
-                        binder.player.pause()
+                        binder.syncPause()
                     } else {
-                        if (binder.player.playbackState == Player.STATE_IDLE) {
-                            binder.player.prepare()
-                        } else if (binder.player.playbackState == Player.STATE_ENDED) {
-                            binder.player.seekToDefaultPosition(0)
-                        }
-                        binder.player.play()
+                        binder.syncPlay()
                     }
                 },
                 modifier = Modifier.size(64.dp),
@@ -250,7 +245,7 @@ fun Controls(
             )
 
             IconButton(
-                onClick = binder.player::forceSeekToNext,
+                onClick = { binder.syncSkipNext() },
                 modifier = Modifier.weight(1F)
             ) {
                 Icon(

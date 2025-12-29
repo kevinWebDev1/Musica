@@ -193,8 +193,8 @@ fun Queue(
                                 song = window.mediaItem,
                                 onClick = {
                                     if (isPlayingThisMediaItem) {
-                                        if (shouldBePlaying) player.pause()
-                                        else player.play()
+                                        if (shouldBePlaying) binder.syncPause()
+                                        else binder.syncPlay()
                                     } else {
                                         player.seekToDefaultPosition(window.firstPeriodIndex)
                                         player.playWhenReady = true

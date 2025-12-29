@@ -108,19 +108,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
@@ -167,6 +172,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     private var radio: YouTubeRadio? = null
 
+    private lateinit var sessionManager: com.github.musicyou.sync.session.SessionManager
     private lateinit var bitmapProvider: BitmapProvider
 
     private val coroutineScope = CoroutineScope(Dispatchers.IO) + Job()
@@ -175,6 +181,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     private var isPersistentQueueEnabled = false
     private var isShowingThumbnailInLockscreen = true
+    private lateinit var transportManager: com.github.musicyou.sync.transport.TransportManager
     override var isInvincibilityEnabled = false
 
     private var audioManager: AudioManager? = null
@@ -260,6 +267,22 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         }
         cache = SimpleCache(directory, cacheEvictor, StandaloneDatabaseProvider(this))
 
+        // Initialize Sync Components
+        val timeSyncEngine = com.github.musicyou.sync.time.TimeSyncEngine()
+        
+        // Initialize Transports
+        // Initialize Transports
+        val nearbyTransport = com.github.musicyou.sync.transport.NearbyTransportLayer(this, isHost = true) // Default to Host for now? Or need a toggle.
+        
+        // Disable WebRTC and WebSocket for now to prevent native crashes (SIGSEGV in libjingle)
+        // val webRtcTransport = com.github.musicyou.sync.transport.WebRtcTransportLayer(this, object : com.github.musicyou.sync.transport.SignalingClient { ... })
+        // val webSocketTransport = com.github.musicyou.sync.transport.WebSocketTransportLayer()
+        
+        transportManager = com.github.musicyou.sync.transport.TransportManager(
+            listOf(nearbyTransport) // Only use Nearby for now
+        )
+        
+        // Initialize ExoPlayer (Standard init)
         player = ExoPlayer.Builder(this, createRendersFactory(), createMediaSourceFactory())
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -272,7 +295,191 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             )
             .setUsePlatformDiagnostics(false)
             .build()
+            
+        // Wrap ExoPlayer
+        val playbackEngine = com.github.musicyou.sync.playback.ExoPlayerPlaybackEngine(this, player)
+        
+        // Initialize SessionManager
+        // Initialize SessionManager
+        sessionManager = com.github.musicyou.sync.session.SessionManager(
+            timeSyncEngine,
+            playbackEngine,
+            transportManager, // Inject Transport
+            coroutineScope
+        )
+        
+        // Default to Host for testing if needed, or controlled by UI
+        sessionManager.setEventBroadcaster { event ->
+            // Serialize event and send via transport
+            val bytes = com.github.musicyou.sync.protocol.SyncEventSerializer.toByteArray(event) 
+            coroutineScope.launch { 
+                transportManager.send(bytes) 
+            }
+        }
+        
+        // Listen for incoming messages from Transport
+        coroutineScope.launch {
+            transportManager.incomingMessages.collect { bytes ->
+                try {
+                val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
+                if (event != null) {
+                    android.util.Log.d("PlayerService", "Received Event: $event")
+                    
+                    // DEBUG: Toast EVERY event to verify Host reception
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(applicationContext, "RX: ${event::class.java.simpleName}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
 
+                    sessionManager.processEvent(event)
+                    
+                    // Show Toast for media events (Play) to confirm sync
+                    if (event is com.github.musicyou.sync.protocol.PlayEvent) {
+                         withContext(Dispatchers.Main) {
+                             android.widget.Toast.makeText(
+                                 applicationContext, 
+                                 "Sync: Playing ${event.mediaId}", 
+                                 android.widget.Toast.LENGTH_SHORT
+                             ).show()
+                         }
+                    }
+                } else {
+                     withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(applicationContext, "RX: Failed to parse (${bytes.size}b)", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(applicationContext, "RX: Error ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        
+        // Listen for Session State to show 'Connected' toast
+        coroutineScope.launch {
+            sessionManager.sessionState.collect { state ->
+                 if (state.connectedPeers.isNotEmpty()) {
+                     // Check if this is a fresh connection event? 
+                     // For now, simpler to just log or rely on the UI update.
+                 }
+            }
+        }
+        
+        // Session starting is now controlled by SyncDialog with permission checks
+        
+        // Continue with remaining player setup
+        setupPlayerAfterSessionManager()
+    }
+    
+    /**
+     * Reinitialize SessionManager with a new transport layer.
+     * Called when switching between Nearby (local) and WebRTC (internet) transports.
+     */
+    private fun reinitializeSessionManager(newTransport: com.github.musicyou.sync.transport.TransportLayer) {
+        android.util.Log.d("MusicSync", "Reinitializing SessionManager with new transport")
+        
+        // Disconnect old transport
+        coroutineScope.launch {
+            transportManager.disconnect()
+        }
+        
+        // Create new TransportManager with the new transport
+        transportManager = com.github.musicyou.sync.transport.TransportManager(
+            listOf(newTransport)
+        )
+        
+        // Recreate SessionManager with new transport
+        val playbackEngine = sessionManager.playbackEngine
+        val timeSyncEngine = sessionManager.timeSyncEngine
+        
+        sessionManager = com.github.musicyou.sync.session.SessionManager(
+            timeSyncEngine,
+            playbackEngine,
+            transportManager,
+            coroutineScope
+        )
+        
+        // Re-setup event broadcaster
+        sessionManager.setEventBroadcaster { event ->
+            android.util.Log.i("MusicSync", "EVENT BROADCAST: ${event::class.java.simpleName}")
+            val bytes = com.github.musicyou.sync.protocol.SyncEventSerializer.toByteArray(event)
+            android.util.Log.d("MusicSync", "EVENT SERIALIZED: ${bytes.size} bytes")
+            coroutineScope.launch {
+                android.util.Log.d("MusicSync", "EVENT SENDING via transport...")
+                transportManager.send(bytes)
+                android.util.Log.d("MusicSync", "EVENT SENT!")
+            }
+        }
+        
+        // Setup metadata provider to include track info in sync events
+        // IMPORTANT: Player must only be accessed on main thread, so we cache metadata
+        var cachedTitle: String? = null
+        var cachedArtist: String? = null
+        var cachedThumbnailUrl: String? = null
+        
+        // Update cached metadata whenever player state changes (on main thread)
+        player.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                cachedTitle = mediaItem?.mediaMetadata?.title?.toString()
+                cachedArtist = mediaItem?.mediaMetadata?.artist?.toString()
+                cachedThumbnailUrl = mediaItem?.mediaMetadata?.artworkUri?.toString()
+                android.util.Log.d("MusicSync", "Cached metadata updated: title=$cachedTitle, artist=$cachedArtist")
+            }
+        })
+        
+        // Initialize with current media item (only if we're on main thread)
+        // If called from background thread, the listener will update it on next track change
+        try {
+            player.currentMediaItem?.let { mediaItem ->
+                cachedTitle = mediaItem.mediaMetadata.title?.toString()
+                cachedArtist = mediaItem.mediaMetadata.artist?.toString()
+                cachedThumbnailUrl = mediaItem.mediaMetadata.artworkUri?.toString()
+            }
+        } catch (e: IllegalStateException) {
+            android.util.Log.w("MusicSync", "Could not init metadata cache from background thread, will be set on next track change")
+        }
+        
+        // Provider returns cached values (safe to call from any thread)
+        sessionManager.setMetadataProvider {
+            Triple(cachedTitle, cachedArtist, cachedThumbnailUrl)
+        }
+        
+        // Setup name provider to include user name in sync events
+        sessionManager.setNameProvider {
+            com.github.musicyou.sync.SyncPreferences.getUserName(this@PlayerService)
+        }
+        
+        // Setup toast handler to show notifications when participants request changes
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        sessionManager.setToastHandler { message ->
+            mainHandler.post {
+                android.widget.Toast.makeText(this@PlayerService, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        
+        // Re-listen for incoming messages
+        coroutineScope.launch {
+            android.util.Log.i("MusicSync", "Starting to collect incoming messages from transport")
+            transportManager.incomingMessages.collect { bytes ->
+                android.util.Log.i("MusicSync", "RECEIVED ${bytes.size} bytes from transport!")
+                try {
+                    val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
+                    if (event != null) {
+                        android.util.Log.i("MusicSync", "RECEIVED EVENT: ${event::class.java.simpleName}")
+                        sessionManager.processEvent(event)
+                    } else {
+                        android.util.Log.w("MusicSync", "Failed to deserialize event - null returned")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("MusicSync", "Error processing event", e)
+                }
+            }
+        }
+        
+        android.util.Log.d("MusicSync", "SessionManager reinitialized successfully")
+    }
+    
+    private fun setupPlayerAfterSessionManager() {
         player.repeatMode = when {
             preferences.getBoolean(trackLoopEnabledKey, false) -> Player.REPEAT_MODE_ONE
             preferences.getBoolean(queueLoopEnabledKey, false) -> Player.REPEAT_MODE_ALL
@@ -331,6 +538,16 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         player.stop()
         player.release()
 
+        player.release()
+        
+        // Clean up Sync components
+        if (::transportManager.isInitialized) {
+            coroutineScope.launch {
+                transportManager.disconnect()
+            }
+        }
+        coroutineScope.cancel()
+
         unregisterReceiver(notificationActionReceiver)
 
         mediaSession.isActive = false
@@ -387,6 +604,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         mediaItemState.update { mediaItem }
 
+        if (::sessionManager.isInitialized && mediaItem != null) {
+            sessionManager.onTrackChanged(mediaItem.mediaId, reason)
+        }
+
         maybeRecoverPlaybackError()
         maybeNormalizeVolume()
         maybeProcessRadio()
@@ -401,6 +622,27 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             updateMediaSessionQueue(player.currentTimeline)
         }
     }
+
+    // Sync play/pause state changes from any source
+    private var lastIsPlaying = false
+    override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (::sessionManager.isInitialized && sessionManager.sessionState.value.isHost) {
+            // Only sync if state actually changed
+            if (isPlaying != lastIsPlaying) {
+                android.util.Log.d("MusicSync", "onIsPlayingChanged: $isPlaying -> broadcasting")
+                if (isPlaying) {
+                    sessionManager.resume()
+                } else {
+                    sessionManager.pause()
+                }
+            }
+            lastIsPlaying = isPlaying
+        }
+    }
+
+    // NOTE: onPositionDiscontinuity removed - it was causing infinite seek loops.
+    // Seeks are synced via SessionCallback.onSeekTo() instead.
+    // If UI slider bypasses SessionCallback, we'll need a different approach.
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
@@ -1002,6 +1244,168 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             radioJob?.cancel()
             radio = null
         }
+
+        val sessionManager: com.github.musicyou.sync.session.SessionManager
+            get() = this@PlayerService.sessionManager
+        
+        /**
+         * Check if a sync session is currently active.
+         */
+        val isSyncActive: Boolean
+            get() = this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null
+        
+        /**
+         * Sync-aware play. Routes through SessionManager when sync is active.
+         * UI should use this instead of player.play() directly.
+         */
+        fun syncPlay() {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                android.util.Log.d("MusicSync", "syncPlay: Routing through SessionManager")
+                sessionManager.resume()
+            } else {
+                android.util.Log.d("MusicSync", "syncPlay: No sync active, direct play")
+                if (player.playbackState == Player.STATE_IDLE) player.prepare()
+                else if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
+                player.play()
+            }
+        }
+        
+        /**
+         * Sync-aware pause. Routes through SessionManager when sync is active.
+         * UI should use this instead of player.pause() directly.
+         */
+        fun syncPause() {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                android.util.Log.d("MusicSync", "syncPause: Routing through SessionManager")
+                sessionManager.pause()
+            } else {
+                android.util.Log.d("MusicSync", "syncPause: No sync active, direct pause")
+                player.pause()
+            }
+        }
+        
+        /**
+         * Sync-aware seekTo. Routes through SessionManager when sync is active.
+         * UI should use this instead of player.seekTo() directly.
+         */
+        fun syncSeekTo(positionMs: Long) {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                android.util.Log.d("MusicSync", "syncSeekTo: Routing through SessionManager, pos=$positionMs")
+                sessionManager.seekTo(positionMs)
+            } else {
+                android.util.Log.d("MusicSync", "syncSeekTo: No sync active, direct seek")
+                player.seekTo(positionMs)
+            }
+        }
+        
+        /**
+         * Sync-aware skip to next track.
+         * Blocks for participants only when Host-Only Mode is ON.
+         */
+        fun syncSkipNext() {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                val state = sessionManager.sessionState.value
+                // Only block if Host-Only Mode is ON
+                if (!state.isHost && state.hostOnlyMode) {
+                    android.util.Log.d("MusicSync", "syncSkipNext: Participant blocked (Host-Only Mode)")
+                    return
+                }
+                android.util.Log.d("MusicSync", "syncSkipNext: Skipping to next (sync active)")
+                player.forceSeekToNext()
+            } else {
+                android.util.Log.d("MusicSync", "syncSkipNext: No sync active, direct skip")
+                player.forceSeekToNext()
+            }
+        }
+        
+        /**
+         * Sync-aware skip to previous track.
+         * Blocks for participants only when Host-Only Mode is ON.
+         */
+        fun syncSkipPrevious() {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                val state = sessionManager.sessionState.value
+                // Only block if Host-Only Mode is ON
+                if (!state.isHost && state.hostOnlyMode) {
+                    android.util.Log.d("MusicSync", "syncSkipPrevious: Participant blocked (Host-Only Mode)")
+                    return
+                }
+                android.util.Log.d("MusicSync", "syncSkipPrevious: Skipping to previous (sync active)")
+                player.forceSeekToPrevious()
+            } else {
+                android.util.Log.d("MusicSync", "syncSkipPrevious: No sync active, direct skip")
+                player.forceSeekToPrevious()
+            }
+        }
+        
+        /**
+         * Start a sync session with the specified transport mode.
+         * @param isLongDistance If true, use WebRTC for internet sync. If false, use Nearby for local sync.
+         */
+        fun startSyncSession(isLongDistance: Boolean) {
+            android.util.Log.i("MusicSync", "startSyncSession: isLongDistance=$isLongDistance")
+            
+            coroutineScope.launch {
+                // Stop any existing session first
+                sessionManager.stopSession()
+                
+                // Create appropriate transport
+                val newTransport: com.github.musicyou.sync.transport.TransportLayer = if (isLongDistance) {
+                    android.util.Log.d("MusicSync", "Creating WebRTC transport for long distance")
+                    com.github.musicyou.sync.transport.WebRtcTransportLayer(
+                        this@PlayerService,
+                        isHost = true
+                    )
+                } else {
+                    android.util.Log.d("MusicSync", "Creating Nearby transport for local sync")
+                    com.github.musicyou.sync.transport.NearbyTransportLayer(
+                        this@PlayerService,
+                        isHost = true
+                    )
+                }
+                
+                // Reinitialize SessionManager with new transport
+                reinitializeSessionManager(newTransport)
+                
+                // Start session
+                sessionManager.startSession()
+            }
+        }
+        
+        /**
+         * Join a sync session with the specified transport mode.
+         * @param code The session code to join.
+         * @param isLongDistance If true, use WebRTC for internet sync. If false, use Nearby for local sync.
+         */
+        fun joinSyncSession(code: String, isLongDistance: Boolean) {
+            android.util.Log.i("MusicSync", "joinSyncSession: code=$code, isLongDistance=$isLongDistance")
+            
+            coroutineScope.launch {
+                // Stop any existing session first
+                sessionManager.stopSession()
+                
+                // Create appropriate transport
+                val newTransport: com.github.musicyou.sync.transport.TransportLayer = if (isLongDistance) {
+                    android.util.Log.d("MusicSync", "Creating WebRTC transport for long distance join")
+                    com.github.musicyou.sync.transport.WebRtcTransportLayer(
+                        this@PlayerService,
+                        isHost = false
+                    )
+                } else {
+                    android.util.Log.d("MusicSync", "Creating Nearby transport for local sync join")
+                    com.github.musicyou.sync.transport.NearbyTransportLayer(
+                        this@PlayerService,
+                        isHost = false
+                    )
+                }
+                
+                // Reinitialize SessionManager with new transport
+                reinitializeSessionManager(newTransport)
+                
+                // Join session
+                sessionManager.joinSession(code)
+            }
+        }
     }
 
     private fun likeAction() = mediaItemState.value?.let { mediaItem ->
@@ -1017,17 +1421,54 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     private fun play() {
         if (player.playerError != null) player.prepare()
-        else if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
+        
+        // Use SessionManager for playback control
+        if (::sessionManager.isInitialized) {
+             sessionManager.resume()
+             return
+        }
+
+        // Fallback or internal logic if needed (though SessionManager should handle it)
+        if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
         else player.play()
     }
 
     private inner class SessionCallback(private val player: Player) : MediaSession.Callback() {
         override fun onPlay() = play()
-        override fun onPause() = player.pause()
-        override fun onSkipToPrevious() = runCatching(player::forceSeekToPrevious).let { }
-        override fun onSkipToNext() = runCatching(player::forceSeekToNext).let { }
-        override fun onSeekTo(pos: Long) = player.seekTo(pos)
-        override fun onStop() = player.pause()
+        override fun onPause() {
+            if (::sessionManager.isInitialized) sessionManager.pause()
+            else player.pause()
+        }
+        override fun onSkipToPrevious() {
+            // Block for participants in Host-Only Mode
+            if (::sessionManager.isInitialized) {
+                val state = sessionManager.sessionState.value
+                if (state.sessionId != null && !state.isHost && state.hostOnlyMode) {
+                    android.util.Log.d("MusicSync", "SessionCallback: Blocking skipPrevious (Host-Only Mode)")
+                    return
+                }
+            }
+            runCatching(player::forceSeekToPrevious)
+        }
+        override fun onSkipToNext() {
+            // Block for participants in Host-Only Mode
+            if (::sessionManager.isInitialized) {
+                val state = sessionManager.sessionState.value
+                if (state.sessionId != null && !state.isHost && state.hostOnlyMode) {
+                    android.util.Log.d("MusicSync", "SessionCallback: Blocking skipNext (Host-Only Mode)")
+                    return
+                }
+            }
+            runCatching(player::forceSeekToNext)
+        }
+        override fun onSeekTo(pos: Long) {
+            if (::sessionManager.isInitialized) sessionManager.seekTo(pos)
+            else player.seekTo(pos)
+        }
+        override fun onStop() {
+            if (::sessionManager.isInitialized) sessionManager.pause()
+            else player.pause()
+        }
         override fun onRewind() = player.seekToDefaultPosition()
         override fun onSkipToQueueItem(id: Long) =
             runCatching { player.seekToDefaultPosition(id.toInt()) }.let { }
@@ -1042,7 +1483,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Action.pause.value -> player.pause()
+                Action.pause.value -> {
+                     if (::sessionManager.isInitialized) sessionManager.pause()
+                     else player.pause()
+                }
                 Action.play.value -> play()
                 Action.next.value -> player.forceSeekToNext()
                 Action.previous.value -> player.forceSeekToPrevious()

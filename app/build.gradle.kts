@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.ksp)
+    alias(libs.plugins.google.services)
 }
 
 kotlin {
@@ -62,6 +63,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 ksp {
@@ -91,5 +96,14 @@ dependencies {
     implementation(projects.github)
     implementation(projects.innertube)
     implementation(projects.kugou)
+    implementation(libs.webrtc)
+    implementation(libs.play.services.nearby)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.firestore)
+    
+    testImplementation(libs.junit)
+    testImplementation(libs.truth)
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
     coreLibraryDesugaring(libs.desugaring)
 }

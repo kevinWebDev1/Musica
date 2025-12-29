@@ -115,7 +115,7 @@ fun About() {
                 )
             },
             modifier = Modifier.clickable {
-                uriHandler.openUri("https://github.com/DanielSevillano/music-you")
+                uriHandler.openUri("https://github.com/kevinWebDev1/refine-board-landing-page/releases/latest/download/musica-app.apk")
             }
         )
     }

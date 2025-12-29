@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">Music You</string>
+    <string name="app_name" translatable="false">Musica</string>
     <string name="home">Home</string>
     <string name="songs">Songs</string>
     <string name="playlists">Playlists</string>
@@ -195,4 +195,16 @@
     <string name="featured_on">Featured on</string>
     <string name="fans_might_also_like">Fans might also like</string>
     <string name="no_related_albums">No related albums were found</string>
+    <string name="sync_session">Music Sync</string>
+    <string name="host_session">Host Session</string>
+    <string name="join_session">Join Session</string>
+    <string name="enter_code">Enter Session Code</string>
+    <string name="connect">Connect</string>
+    <string name="stop_session">Stop Session</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="session_id_label">Session ID: %s</string>
+    <string name="connected_peers">Connected Peers: %d</string>
+    <string name="hosting">Hosting</string>
+    <string name="joining">Joining</string>
+    <string name="participant">Participant</string>
 </resources>

@@ -1,0 +1,85 @@
+﻿Reusing configuration cache.
+> Task :innertube:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :github:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :ktor-client-brotli:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :kugou:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :ktor-client-brotli:processResources NO-SOURCE
+> Task :innertube:processResources NO-SOURCE
+> Task :github:processResources NO-SOURCE
+> Task :kugou:processResources NO-SOURCE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:generateDebugResValues
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:checkDebugAarMetadata
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugNavigationResources
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:compileDebugNavigationResources
+> Task :app:javaPreCompileDebug
+> Task :app:processDebugMainManifest
+> Task :app:packageDebugResources
+> Task :ktor-client-brotli:compileKotlin
+> Task :ktor-client-brotli:compileJava NO-SOURCE
+> Task :ktor-client-brotli:classes UP-TO-DATE
+> Task :app:parseDebugLocalResources
+> Task :ktor-client-brotli:jar
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :github:compileKotlin
+> Task :github:compileJava NO-SOURCE
+> Task :github:classes UP-TO-DATE
+> Task :github:jar
+> Task :kugou:compileKotlin
+> Task :kugou:compileJava NO-SOURCE
+> Task :kugou:classes UP-TO-DATE
+> Task :kugou:jar
+> Task :app:mergeDebugResources
+> Task :app:processDebugResources
+> Task :innertube:compileKotlin
+> Task :innertube:compileJava NO-SOURCE
+> Task :innertube:classes UP-TO-DATE
+> Task :innertube:jar
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/RAJA%20RATHOUR/Desktop/Program/music-you/app/src/main/kotlin/com/github/musicyou/Database.kt:511:9 Experimental context receivers are deprecated and will be superseded by context parameters.
+Kotlin compiler version 2.2 will be the last version that supports context receivers.
+Consider migrating to extension receivers or regular parameters now.
+Alternatively, migrate directly to context parameters when Kotlin 2.2 is released.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/RAJA%20RATHOUR/Desktop/Program/music-you/app/src/main/kotlin/com/github/musicyou/Database.kt:713:18 This extension is shadowed by a member: 'val path: String?' defined in 'androidx/room/RoomDatabase'.
+w: file:///C:/Users/RAJA%20RATHOUR/Desktop/Program/music-you/app/src/main/kotlin/com/github/musicyou/service/PlayerService.kt:1144:9 Experimental context receivers are deprecated and will be superseded by context parameters.
+Kotlin compiler version 2.2 will be the last version that supports context receivers.
+Consider migrating to extension receivers or regular parameters now.
+Alternatively, migrate directly to context parameters when Kotlin 2.2 is released.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/RAJA%20RATHOUR/Desktop/Program/music-you/app/src/main/kotlin/com/github/musicyou/utils/LazyGridSnapLayoutInfoProvider.kt:29:1 Experimental context receivers are deprecated and will be superseded by context parameters.
+Kotlin compiler version 2.2 will be the last version that supports context receivers.
+Consider migrating to extension receivers or regular parameters now.
+Alternatively, migrate directly to context parameters when Kotlin 2.2 is released.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 34s
+34 actionable tasks: 34 executed
+Configuration cache entry reused.

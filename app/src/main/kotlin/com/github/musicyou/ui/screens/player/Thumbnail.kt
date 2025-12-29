@@ -216,7 +216,7 @@ fun Thumbnail(
         }
 
         val startAction = SwipeAction(
-            onSwipe = { binder.player.forceSeekToPrevious() },
+            onSwipe = { binder.syncSkipPrevious() },
             icon = {
                 Icon(
                     imageVector = Icons.Outlined.SkipPrevious,
@@ -229,7 +229,7 @@ fun Thumbnail(
         )
 
         val endAction = SwipeAction(
-            onSwipe = { binder.player.forceSeekToNext() },
+            onSwipe = { binder.syncSkipNext() },
             icon = {
                 Icon(
                     imageVector = Icons.Outlined.SkipNext,

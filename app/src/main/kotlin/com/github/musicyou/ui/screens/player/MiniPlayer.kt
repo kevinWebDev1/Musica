@@ -119,15 +119,8 @@ fun MiniPlayer(
                     Row {
                         IconButton(
                             onClick = {
-                                if (shouldBePlaying) binder.player.pause()
-                                else {
-                                    if (binder.player.playbackState == Player.STATE_IDLE) {
-                                        binder.player.prepare()
-                                    } else if (binder.player.playbackState == Player.STATE_ENDED) {
-                                        binder.player.seekToDefaultPosition(0)
-                                    }
-                                    binder.player.play()
-                                }
+                                if (shouldBePlaying) binder.syncPause()
+                                else binder.syncPlay()
                             }
                         ) {
                             Icon(
@@ -163,7 +156,7 @@ fun MiniPlayer(
     }
 
     val startAction = SwipeAction(
-        onSwipe = { binder.player.forceSeekToPrevious() },
+        onSwipe = { binder.syncSkipPrevious() },
         icon = {
             Icon(
                 imageVector = Icons.Outlined.SkipPrevious,
@@ -176,7 +169,7 @@ fun MiniPlayer(
     )
 
     val endAction = SwipeAction(
-        onSwipe = { binder.player.forceSeekToNext() },
+        onSwipe = { binder.syncSkipNext() },
         icon = {
             Icon(
                 imageVector = Icons.Outlined.SkipNext,

@@ -1,0 +1,43 @@
+graph TD
+    %% Define Styles
+    classDef manager fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef engine fill:#ccf,stroke:#333,stroke-width:1px;
+    classDef transport fill:#cfc,stroke:#333,stroke-width:1px;
+    classDef ui fill:#eee,stroke:#333,stroke-width:1px;
+
+    %% Subgraph: Local Device
+    subgraph "Local Device"
+        UI[UI Layer]
+        SM[Session Manager]
+        TS[TimeSync Engine]
+        PE[Playback Engine]
+        TL[Transport Layer]
+
+        %% UI Flow
+        UI -->|User Intent <br/>(Play/Pause)| SM
+        SM -->|Session State <br/>(Status, Users)| UI
+
+        %% Time Flow
+        TS -->|Clock Offset & Drift| SM
+        
+        %% Transport Flow
+        TL -->|Incoming Events| SM
+        SM -->|Outgoing Events| TL
+        
+        %% Playback Flow
+        SM -->|Commands <br/>(PlayNow, SeekTo, Pause)| PE
+        PE -->|Actual Position| SM
+        
+        %% NO CONNECTION between TS and PE
+    end
+
+    %% Network
+    subgraph "Network"
+        Ext[Other Devices] <--> TL
+    end
+
+    %% Apply Styles
+    class SM manager;
+    class TS,PE engine;
+    class TL transport;
+    class UI ui;

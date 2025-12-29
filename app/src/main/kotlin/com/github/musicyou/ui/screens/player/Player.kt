@@ -1,5 +1,6 @@
 package com.github.musicyou.ui.screens.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -125,6 +127,20 @@ fun Player(
     var isShowingStatsForNerds by rememberSaveable { mutableStateOf(false) }
     var isQueueOpen by rememberSaveable { mutableStateOf(false) }
     var isShowingSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
+    var isShowingSyncDialog by rememberSaveable { mutableStateOf(false) }
+    
+    // Collect sync session state for Host-Only Mode back button blocking
+    val syncSessionState by binder.sessionManager.sessionState.collectAsState()
+    val isParticipantLocked = syncSessionState.sessionId != null && 
+                               !syncSessionState.isHost && 
+                               syncSessionState.hostOnlyMode
+    
+    // Block back navigation for participants when Host-Only Mode is ON
+    BackHandler(enabled = isParticipantLocked) {
+        // Do nothing - block the back press
+        android.util.Log.d("MusicSync", "BackHandler: Participant blocked from going back (Host-Only Mode)")
+    }
+    
     val sleepTimerMillisLeft by (binder.sleepTimerMillisLeft
         ?: flowOf(null))
         .collectAsState(initial = null)
@@ -259,6 +275,12 @@ fun Player(
                 onClick = { isShowingSleepTimerDialog = true },
                 icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
             )
+            
+            TooltipIconButton(
+                description = R.string.sync_session,
+                onClick = { isShowingSyncDialog = true },
+                icon = androidx.compose.material.icons.Icons.Outlined.Group
+            )
 
             IconButton(
                 onClick = {
@@ -288,6 +310,21 @@ fun Player(
             SleepTimer(
                 sleepTimerMillisLeft = sleepTimerMillisLeft,
                 onDismiss = { isShowingSleepTimerDialog = false }
+            )
+        }
+        
+        if (isShowingSyncDialog) {
+            SyncDialog(
+                sessionManager = binder.sessionManager,
+                onDismiss = { isShowingSyncDialog = false },
+                onStartSession = { isLongDistance ->
+                    binder.startSyncSession(isLongDistance)
+                    isShowingSyncDialog = false
+                },
+                onJoinSession = { code, isLongDistance ->
+                    binder.joinSyncSession(code, isLongDistance)
+                    isShowingSyncDialog = false
+                }
             )
         }
 

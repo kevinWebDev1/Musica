@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "98221868348",
+    "project_id": "musicyou-sync",
+    "storage_bucket": "musicyou-sync.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98221868348:android:1f47acb26bbd31b9d04a39",
+        "android_client_info": {
+          "package_name": "com.github.musicyou"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrfmaZCmmWpQwQecNeIIePZO2FNxg6Aus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98221868348:android:120fe570c7ce0c4dd04a39",
+        "android_client_info": {
+          "package_name": "com.github.musicyou.debug"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrfmaZCmmWpQwQecNeIIePZO2FNxg6Aus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
