@@ -163,7 +163,7 @@ fun About() {
 
                             FilledTonalButton(
                                 onClick = {
-                                    uriHandler.openUri("https://github.com/kevinWebDev1/refine-board-landing-page/releases/latest/download/musica-app.apk")
+                                    uriHandler.openUri("https://github.com/kevinWebDev1/Musica/releases/latest/download/musica-app.apk")
                                 }
                             ) {
                                 Icon(
