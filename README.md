@@ -4,8 +4,15 @@ An Android application for streaming music from YouTube Music.
 
 ![Repository preview](./screenshots/repository_preview.jpg)
 
-## ✨ Features
+## ✨ Core Features
 
+### 🎧 Music Sync (Listen Together)
+**Real-time synchronization** with friends!
+- **Host & Join:** One person controls the music, everyone listens in perfect sync.
+- **Cross-Device:** Works seamlessly across Android devices.
+- **Low Latency:** Optimized for instant play/pause/seek syncing.
+
+### 🚀 Standard Features
 - Background playback
 - Cache songs for offline playback
 - Search for songs, albums, artists, videos and playlists
@@ -15,14 +22,7 @@ An Android application for streaming music from YouTube Music.
 - Open YouTube and YouTube Music links by default
 - Player features, such as sleep timer and persistent queue
 - Audio features, such as skip silence and audio normalization
-- Other features, such as Android Auto support and invincible service
-
-### 🗒️ New features
-
-- Material You redesign
-- Multilingual support
-- Quick picks selection customization
-- Swipe to enqueue and delete songs
+- Android Auto support
 
 ## 🌐 Available languages
 
@@ -47,7 +47,7 @@ An Android application for streaming music from YouTube Music.
 
 [<img src="https://github.com/machiav3lli/oandbackupx/blob/034b226cea5c1b30eb4f6a6f313e4dadcbb0ece4/badge_github.png"
 alt="Get it on GitHub"
-height="80">](https://github.com/DanielSevillano/music-you/releases/latest)
+height="80">](https://github.com/kevinWebDev1/refine-board-landing-page/releases/latest)
 
 ## 🌟 Inspiration
 

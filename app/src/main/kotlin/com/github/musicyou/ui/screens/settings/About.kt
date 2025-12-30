@@ -102,22 +102,7 @@ fun About() {
             Text(text = stringResource(id = R.string.check_for_updates))
         }
 
-        Spacer(modifier = Modifier.height(Dimensions.spacer + 8.dp))
 
-        ListItem(
-            headlineContent = {
-                Text(text = stringResource(id = R.string.github))
-            },
-            leadingContent = {
-                Icon(
-                    painter = painterResource(id = R.drawable.github),
-                    contentDescription = stringResource(id = R.string.github)
-                )
-            },
-            modifier = Modifier.clickable {
-                uriHandler.openUri("https://github.com/kevinWebDev1/refine-board-landing-page/releases/latest/download/musica-app.apk")
-            }
-        )
     }
 
     if (isShowingDialog) {
@@ -176,20 +161,20 @@ fun About() {
                             style = MaterialTheme.typography.titleMedium
                         )
 
-                        FilledTonalButton(
-                            onClick = {
-                                uriHandler.openUri("https://github.com/DanielSevillano/music-you/releases/latest")
+                            FilledTonalButton(
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/kevinWebDev1/refine-board-landing-page/releases/latest/download/musica-app.apk")
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Update,
+                                    contentDescription = "Download"
+                                )
+
+                                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+
+                                Text(text = "Download Update")
                             }
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.github),
-                                contentDescription = stringResource(id = R.string.github)
-                            )
-
-                            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-
-                            Text(text = stringResource(id = R.string.open_in_github))
-                        }
                     }
                 }
             }
