@@ -451,9 +451,13 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         
         // Setup toast handler to show notifications when participants request changes
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var currentToast: android.widget.Toast? = null
+        
         sessionManager.setToastHandler { message ->
             mainHandler.post {
-                android.widget.Toast.makeText(this@PlayerService, message, android.widget.Toast.LENGTH_SHORT).show()
+                currentToast?.cancel()
+                currentToast = android.widget.Toast.makeText(this@PlayerService, message, android.widget.Toast.LENGTH_SHORT)
+                currentToast?.show()
             }
         }
         

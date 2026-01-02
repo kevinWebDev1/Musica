@@ -110,7 +110,7 @@ fun About() {
             if (newVersionAvailable == null || latestVersion == null) {
                 latestVersion = GitHub.getLastestRelease()?.name
                 latestVersion?.let {
-                    newVersionAvailable = it > currentVersion
+                    newVersionAvailable = it.removePrefix("v") > currentVersion.removePrefix("v")
                 }
             }
         }

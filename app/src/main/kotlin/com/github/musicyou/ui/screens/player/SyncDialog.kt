@@ -196,6 +196,38 @@ fun SyncDialog(
                         text = stringResource(R.string.connected_peers, sessionState.connectedPeers.size),
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    
+                    // Sync Status Indicator
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        // Status icon
+                        Text(
+                            text = when (sessionState.syncStatus) {
+                                SessionState.SyncStatus.WAITING -> "🔴"
+                                SessionState.SyncStatus.SYNCING -> "🟡"
+                                SessionState.SyncStatus.READY -> "🟢"
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        // Status message
+                        Text(
+                            text = sessionState.clockSyncMessage ?: when (sessionState.syncStatus) {
+                                SessionState.SyncStatus.WAITING -> "Waiting..."
+                                SessionState.SyncStatus.SYNCING -> "Syncing clocks..."
+                                SessionState.SyncStatus.READY -> "Ready to sync!"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = when (sessionState.syncStatus) {
+                                SessionState.SyncStatus.WAITING -> MaterialTheme.colorScheme.error
+                                SessionState.SyncStatus.SYNCING -> MaterialTheme.colorScheme.tertiary
+                                SessionState.SyncStatus.READY -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     // Now Playing Card with metadata
@@ -400,7 +432,7 @@ fun SyncDialog(
                             if (inputSessionCode.isNotBlank()) {
                                 checkPermissionsAndExecute {
                                     onJoinSession(inputSessionCode, syncMode == SyncMode.INTERNET)
-                                    onDismiss() 
+                                    // Don't dismiss - let user see sync status
                                 }
                             }
                         },

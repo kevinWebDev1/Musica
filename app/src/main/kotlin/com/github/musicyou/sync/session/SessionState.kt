@@ -33,7 +33,29 @@ data class SessionState(
     val hostOnlyMode: Boolean = false,
     
     // Connected peer names for display (Map of peerId to name)
-    val connectedPeerNames: Map<String, String> = emptyMap()
+    val connectedPeerNames: Map<String, String> = emptyMap(),
+    
+    // Version control - monotonically increasing, set by Host
+    val stateVersion: Long = 0L,
+    
+    // Sync status for UX feedback
+    val syncStatus: SyncStatus = SyncStatus.WAITING,
+    
+    // Clock sync status message
+    val clockSyncMessage: String? = null
 ) {
     enum class Status { PLAYING, PAUSED }
+    
+    /**
+     * Sync status for UX feedback.
+     * WAITING - Host waiting for participants, Participant connecting
+     * SYNCING - Clock calibration in progress
+     * READY - Ready to start synchronized playback
+     */
+    enum class SyncStatus {
+        WAITING,   // Host: waiting for participants, Participant: connecting
+        SYNCING,   // Clock calibration in progress
+        READY      // Ready for synchronized playback
+    }
 }
+

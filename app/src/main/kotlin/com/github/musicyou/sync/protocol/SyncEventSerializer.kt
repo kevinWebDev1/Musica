@@ -57,6 +57,9 @@ object SyncEventSerializer {
                 stateJson.put("playbackStatus", event.state.playbackStatus.name)
                 stateJson.put("trackStartGlobalTime", event.state.trackStartGlobalTime)
                 stateJson.put("hostOnlyMode", event.state.hostOnlyMode)
+                stateJson.put("stateVersion", event.state.stateVersion)
+                stateJson.put("syncStatus", event.state.syncStatus.name)
+                event.state.clockSyncMessage?.let { stateJson.put("clockSyncMessage", it) }
                 
                 // Serialize connected peer names
                 val namesJson = JSONObject()
@@ -138,6 +141,10 @@ object SyncEventSerializer {
                         }
                     }
                     
+                    // Deserialize sync status
+                    val syncStatusStr = stateJson.optString("syncStatus", "WAITING")
+                    val syncStatus = try { SessionState.SyncStatus.valueOf(syncStatusStr) } catch (e: Exception) { SessionState.SyncStatus.WAITING }
+                    
                     val state = SessionState(
                         sessionId = stateJson.optString("sessionId", null),
                         isHost = stateJson.getBoolean("isHost"),
@@ -151,7 +158,10 @@ object SyncEventSerializer {
                         artist = stateJson.optString("artist", null).takeIf { it?.isNotEmpty() == true },
                         thumbnailUrl = stateJson.optString("thumbnailUrl", null).takeIf { it?.isNotEmpty() == true },
                         hostOnlyMode = stateJson.optBoolean("hostOnlyMode", false),
-                        connectedPeerNames = connectedNamesMap
+                        connectedPeerNames = connectedNamesMap,
+                        stateVersion = stateJson.optLong("stateVersion", 0L),
+                        syncStatus = syncStatus,
+                        clockSyncMessage = stateJson.optString("clockSyncMessage", null).takeIf { it?.isNotEmpty() == true }
                     )
                     StateSyncEvent(state, timestamp)
                 }

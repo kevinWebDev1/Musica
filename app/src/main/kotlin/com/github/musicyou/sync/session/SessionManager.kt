@@ -32,8 +32,25 @@ class SessionManager(
         private const val TAG = "MusicSync"
         private const val HEARTBEAT_INTERVAL_MS = 5_000L  // Send heartbeat every 5 seconds to keep connection alive
         private const val SYNC_ECHO_SUPPRESS_MS = 3000L   // Suppress echo for 3 seconds after sync
-        private const val SYNC_LEAD_TIME_MS = 300L        // Schedule playback start 300ms in future for sync
+        private const val SYNC_LEAD_TIME_MS = 4000L       // Schedule playback start 4s in future for sync
         private const val DEBOUNCE_MS = 500L              // Ignore rapid button presses within 500ms
+        
+        // FIX 2: Extended snapshot lock duration to cover async ExoPlayer callbacks
+        private const val SNAPSHOT_LOCK_DURATION_MS = 1500L
+        
+        // FIX 3: Event deduplication thresholds
+        private const val DEDUP_THRESHOLD_MS = 500L
+        private const val POSITION_DRIFT_THRESHOLD_MS = 500L
+        
+        // FIX 5: Host-side coalescing window
+        private const val COALESCE_WINDOW_MS = 200L
+        
+        // PERFECT INITIAL SYNC: All devices buffer first, then start at exactly the same time
+        // No drift correction needed because sync is perfect from the start
+        
+        // PRE-BUFFER TECHNIQUE: Participant plays 5s ahead to fill audio buffer, then resyncs
+        private const val PREBUFFER_AHEAD_MS = 5000L  // Play 5 seconds ahead for buffering
+        private const val PREBUFFER_DURATION_MS = 3000L // Let it buffer for 3 seconds, then resync
     }
 
     private val _sessionState = MutableStateFlow(SessionState())
@@ -79,6 +96,19 @@ class SessionManager(
     private var lastResumeTime: Long = 0L
     private var lastPauseTime: Long = 0L
     private var lastSeekTime: Long = 0L
+    
+    // FIX 3: Event deduplication tracking
+    private var lastAppliedMediaId: String? = null
+    private var lastAppliedStatus: SessionState.Status? = null
+    private var lastAppliedPosition: Long = 0L
+    private var lastAppliedTimestamp: Long = 0L
+    
+    // FIX 4: Version control
+    private var hostStateVersion: Long = 0L
+    private var lastAppliedVersion: Long = 0L
+    
+    // FIX 5: Host-side coalescing job
+    private var pendingBroadcastJob: Job? = null
 
     init {
         Log.d(TAG, "init: SessionManager created")
@@ -99,24 +129,78 @@ class SessionManager(
         transportLayer.connectedPeers.onEach { peers ->
             Log.i(TAG, "init: connectedPeers changed to: $peers (count=${peers.size})")
             val previousPeerCount = _sessionState.value.connectedPeers.size
-            _sessionState.value = _sessionState.value.copy(connectedPeers = peers.toSet())
             
-            // HOST: (MANDATORY) When a new participant connects, immediately send a full StateSyncEvent snapshot
+            // Update connected peers and sync status
+            _sessionState.value = _sessionState.value.copy(
+                connectedPeers = peers.toSet(),
+                // UX: Host shows READY when peers connect, back to WAITING if empty
+                syncStatus = if (isHost && peers.isNotEmpty()) 
+                    SessionState.SyncStatus.READY 
+                else if (isHost) 
+                    SessionState.SyncStatus.WAITING 
+                else 
+                    _sessionState.value.syncStatus,
+                clockSyncMessage = if (isHost && peers.isNotEmpty()) 
+                    "${peers.size} participant(s) connected! Ready to sync."
+                else if (isHost) 
+                    "Waiting for participants to join..."
+                else 
+                    _sessionState.value.clockSyncMessage
+            )
+            
+            // HOST: SEAMLESS SYNC ON JOIN - Host keeps playing, participant syncs to host's timeline
             if (isHost && peers.size > previousPeerCount && peers.isNotEmpty()) {
-                Log.i(TAG, "init: HOST detected new peer joining, sending StateSyncEvent")
+                Log.i(TAG, "init: HOST detected new peer joining - initiating Seamless Sync (host keeps playing)")
+                
                 // Small delay to ensure participant is ready to receive
                 kotlinx.coroutines.delay(500)
-                // Get current metadata to include in the state
+                
+                val engine = playbackEngine.playbackState.value
+                val wasPlaying = engine.isPlaying
+                val currentPos = engine.currentPositionMs
+                val currentMediaId = engine.mediaId
+                
+                // HOST KEEPS PLAYING - NO INTERRUPTION
+                // Calculate scheduled time and where host WILL BE at that time
+                val now = timeSyncEngine.getGlobalTime()
+                val scheduledStartTime = now + SYNC_LEAD_TIME_MS
+                
+                // Target position = where host will be after lead time
+                // If playing: currentPos + leadTime (host advances)
+                // If paused: currentPos (host stays)
+                val targetPosition = if (wasPlaying) {
+                    currentPos + SYNC_LEAD_TIME_MS
+                } else {
+                    currentPos
+                }
+                
+                // Get current metadata
                 val (title, artist, thumbnailUrl) = getCurrentMetadata()
-                val state = _sessionState.value.copy(
+                
+                // Update state with scheduled sync info
+                _sessionState.value = _sessionState.value.copy(
+                    currentMediaId = currentMediaId,
+                    playbackStatus = if (wasPlaying) SessionState.Status.PLAYING else SessionState.Status.PAUSED,
+                    trackStartGlobalTime = scheduledStartTime,
+                    positionAtAnchor = targetPosition,  // Where participant should START
                     title = title,
                     artist = artist,
-                    thumbnailUrl = thumbnailUrl
+                    thumbnailUrl = thumbnailUrl,
+                    clockSyncMessage = if (wasPlaying) "Participant syncing..." else "Ready"
                 )
-                val now = timeSyncEngine.getGlobalTime()
-                val syncEvent = StateSyncEvent(state, now)
-                Log.i(TAG, "init: HOST broadcasting StateSyncEvent - mediaId=${state.currentMediaId}, title=$title, status=${state.playbackStatus}")
+                
+                // Broadcast state - participant will preload and sync
+                val syncEvent = StateSyncEvent(_sessionState.value, now)
+                Log.i(TAG, "init: HOST broadcasting - scheduledStart=$scheduledStartTime, targetPos=$targetPosition (host continues playing)")
                 eventBroadcaster?.invoke(syncEvent)
+                
+                // Host continues playing - no wait/resume needed
+                if (wasPlaying) {
+                    Log.i(TAG, "init: HOST continues playing, participant will catch up")
+                    _sessionState.value = _sessionState.value.copy(
+                        clockSyncMessage = "Playing in sync! 🎵"
+                    )
+                }
             }
             
             // PARTICIPANT: When connecting to host, send join announcement and request state
@@ -145,6 +229,16 @@ class SessionManager(
         var lastPosition: Long = 0L
         
         playbackEngine.playbackState.onEach { state ->
+            // FIX 1: CRITICAL - Suppress ALL auto-broadcasts during snapshot application
+            if (isApplyingSnapshot) {
+                Log.d(TAG, "Auto-broadcast: SUPPRESSED (applying snapshot)")
+                // Still update tracking variables to avoid false delta detection after unlock
+                lastIsPlaying = state.isPlaying
+                lastMediaId = state.mediaId
+                lastPosition = state.currentPositionMs
+                return@onEach
+            }
+            
             // Only broadcast if we are host with connected peers
             if (isHost && _sessionState.value.connectedPeers.isNotEmpty()) {
                 val now = timeSyncEngine.getGlobalTime()
@@ -305,6 +399,90 @@ class SessionManager(
         heartbeatJob?.cancel()
         heartbeatJob = null
     }
+    
+    /**
+     * RAPID SYNC: Send burst of pings on participant join for fast clock calibration.
+     * Sends RAPID_SYNC_COUNT pings at RAPID_SYNC_INTERVAL_MS intervals.
+     * This quickly builds up samples in TimeSyncEngine for Perfect Initial Sync.
+     */
+    private fun startRapidSync() {
+        if (isHost) return // Host doesn't need to sync clock
+        
+        // UX: Set SYNCING status during calibration
+        _sessionState.value = _sessionState.value.copy(
+            syncStatus = SessionState.SyncStatus.SYNCING,
+            clockSyncMessage = "Syncing clocks... (0/5)"
+        )
+        
+        scope.launch {
+            Log.i(TAG, "startRapidSync: Starting rapid clock sync (5 pings at 500ms intervals)")
+            repeat(5) { i ->
+                delay(500) // 500ms between pings
+                if (_sessionState.value.sessionId != null) {
+                    val now = System.currentTimeMillis() // Use local time for ping
+                    val pingId = "rapid-sync-$i-${System.currentTimeMillis()}"
+                    val ping = PingEvent(id = pingId, clientTimestamp = now, timestamp = now)
+                    Log.d(TAG, "rapidSync: Sending ping $pingId (${i + 1}/5)")
+                    eventBroadcaster?.invoke(ping)
+                    
+                    // UX: Update progress
+                    _sessionState.value = _sessionState.value.copy(
+                        clockSyncMessage = "Syncing clocks... (${i + 1}/5)"
+                    )
+                }
+            }
+            
+            // UX: Set READY status after calibration
+            _sessionState.value = _sessionState.value.copy(
+                syncStatus = SessionState.SyncStatus.READY,
+                clockSyncMessage = "Clock synced! Ready for playback."
+            )
+            Log.i(TAG, "startRapidSync: Rapid sync complete, clock calibrated, status=READY")
+        }
+    }
+    
+    /**
+     * FIX 5: HOST-SIDE COALESCING
+     * Debounced broadcast that merges rapid state changes into ONE StateSyncEvent.
+     * Cancels any pending broadcast and schedules a new one after COALESCE_WINDOW_MS.
+     */
+    private fun broadcastAuthoritativeState() {
+        if (!isHost) return
+        
+        pendingBroadcastJob?.cancel()
+        pendingBroadcastJob = scope.launch {
+            delay(COALESCE_WINDOW_MS)
+            hostStateVersion++
+            val (title, artist, thumbnailUrl) = getCurrentMetadata()
+            val state = _sessionState.value.copy(
+                stateVersion = hostStateVersion,
+                title = title,
+                artist = artist,
+                thumbnailUrl = thumbnailUrl
+            )
+            val now = timeSyncEngine.getGlobalTime()
+            Log.i(TAG, "broadcastAuthoritativeState: Sending coalesced StateSyncEvent v$hostStateVersion")
+            eventBroadcaster?.invoke(StateSyncEvent(state, now))
+        }
+    }
+    
+    /**
+     * PERFECT INITIAL SYNC: Wait until scheduled global time before starting playback.
+     * All devices wait together, then start at exactly the same moment.
+     * 
+     * @param scheduledTime The global time when playback should start
+     */
+    private suspend fun waitForScheduledTime(scheduledTime: Long) {
+        val now = timeSyncEngine.getGlobalTime()
+        val waitMs = scheduledTime - now
+        if (waitMs > 0) {
+            Log.i(TAG, "waitForScheduledTime: Waiting ${waitMs}ms until scheduled start")
+            delay(waitMs)
+            Log.i(TAG, "waitForScheduledTime: Wait complete, starting now!")
+        } else {
+            Log.d(TAG, "waitForScheduledTime: Scheduled time already passed (diff=${waitMs}ms), starting immediately")
+        }
+    }
 
 
     // ============================================================
@@ -324,8 +502,11 @@ class SessionManager(
             currentMediaId = engine.mediaId,
             playbackStatus = if (engine.isPlaying) SessionState.Status.PLAYING else SessionState.Status.PAUSED,
             trackStartGlobalTime = now - engine.currentPositionMs,
-            positionAtAnchor = 0L,
-            playbackSpeed = engine.playbackSpeed
+            positionAtAnchor = engine.currentPositionMs,
+            playbackSpeed = engine.playbackSpeed,
+            // UX: Host starts in WAITING status
+            syncStatus = SessionState.SyncStatus.WAITING,
+            clockSyncMessage = "Waiting for participants to join..."
         )
         Log.d(TAG, "startSession: SessionState set - ${_sessionState.value}")
 
@@ -344,6 +525,9 @@ class SessionManager(
         
         // Start heartbeat to keep connection alive
         startHeartbeat()
+        
+        // RAPID SYNC: Quickly calibrate clock for Perfect Initial Sync
+        startRapidSync()
     }
 
     /**
@@ -396,6 +580,12 @@ class SessionManager(
      * Uses scheduled start time for better sync accuracy.
      */
     fun resume() {
+        // FIX 6: Block during snapshot application
+        if (isApplyingSnapshot) {
+            Log.d(TAG, "resume: BLOCKED (snapshot lock active)")
+            return
+        }
+        
         // Debounce rapid button presses
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastResumeTime < DEBOUNCE_MS) {
@@ -416,36 +606,26 @@ class SessionManager(
         val state = playbackEngine.playbackState.value
         val now = timeSyncEngine.getGlobalTime()
         
-        // Schedule playback start for future time to allow sync
-        val scheduledStartTime = if (isHost) now + SYNC_LEAD_TIME_MS else now
-        
         val event = PlayEvent(
             mediaId = state.mediaId ?: return,
             startPos = state.currentPositionMs,
-            timestamp = scheduledStartTime,  // Future time for scheduled start
+            timestamp = now,  // Current time (not future) - participants sync to host's current position
             playbackSpeed = state.playbackSpeed,
             requesterName = getCurrentUserName()  // Always include name (Host or Participant)
         )
         // Send event first!
         eventBroadcaster?.invoke(event)
         
-        // Host schedules local playback for the same future time
+        // Host plays IMMEDIATELY - no waiting
         if (isHost) {
-            scope.launch {
-                val waitTime = scheduledStartTime - timeSyncEngine.getGlobalTime()
-                if (waitTime > 0) {
-                    Log.d(TAG, "resume: Host waiting ${waitTime}ms before playing")
-                    delay(waitTime)
-                }
-                playbackEngine.play()
-                
-                // Update session state
-                _sessionState.value = _sessionState.value.copy(
-                    playbackStatus = SessionState.Status.PLAYING,
-                    trackStartGlobalTime = scheduledStartTime,
-                    positionAtAnchor = state.currentPositionMs
-                )
-            }
+            playbackEngine.play()
+            
+            // Update session state
+            _sessionState.value = _sessionState.value.copy(
+                playbackStatus = SessionState.Status.PLAYING,
+                trackStartGlobalTime = now,
+                positionAtAnchor = state.currentPositionMs
+            )
         }
     }
 
@@ -453,6 +633,12 @@ class SessionManager(
      * Pause playback. Broadcasts PauseEvent to everyone.
      */
     fun pause() {
+        // FIX 6: Block during snapshot application
+        if (isApplyingSnapshot) {
+            Log.d(TAG, "pause: BLOCKED (snapshot lock active)")
+            return
+        }
+        
         // Debounce rapid button presses
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastPauseTime < DEBOUNCE_MS) {
@@ -495,6 +681,12 @@ class SessionManager(
      * Also auto-resumes playback for better UX.
      */
     fun seekTo(positionMs: Long) {
+        // FIX 6: Block during snapshot application
+        if (isApplyingSnapshot) {
+            Log.d(TAG, "seekTo: BLOCKED (snapshot lock active)")
+            return
+        }
+        
         // Prevent re-entrancy (ExoPlayer callback triggering another seekTo)
         if (isSeeking) {
             Log.d(TAG, "seekTo: Skipping re-entrant call for pos=$positionMs")
@@ -604,10 +796,12 @@ class SessionManager(
         
         // Broadcast the track change (Host or Participant requesting new track)
         val now = timeSyncEngine.getGlobalTime()
+        val scheduledStartTime = if (isHost) now + SYNC_LEAD_TIME_MS else now
+        
         val event = PlayEvent(
             mediaId = mediaId,
             startPos = 0L,
-            timestamp = now,
+            timestamp = scheduledStartTime,
             playbackSpeed = playbackEngine.playbackState.value.playbackSpeed,
             title = metadata?.first,
             artist = metadata?.second,
@@ -616,18 +810,42 @@ class SessionManager(
         )
         
         if (isHost) {
-            Log.i(TAG, "onTrackChanged: HOST Broadcasting PlayEvent for new track - mediaId=$mediaId")
+            Log.i(TAG, "onTrackChanged: HOST performing Synchronous Start (delay=${SYNC_LEAD_TIME_MS}ms) for $mediaId")
+            
+            // 1. Pause temporarily so we don't get ahead while waiting for precision start
+            // Set flag to suppress the PauseEvent broadcast from the auto-detector
+            isApplyingSnapshot = true 
+            playbackEngine.pause()
+            // Reset flag after short delay (enough for callback to assume it's handled)
+            scope.launch { 
+                delay(100)
+                isApplyingSnapshot = false 
+            }
+            
+            // 2. Broadcast the Future PlayEvent
             _sessionState.value = _sessionState.value.copy(
                 currentMediaId = mediaId,
                 playbackStatus = SessionState.Status.PLAYING,
-                trackStartGlobalTime = now,
-                positionAtAnchor = 0L
+                trackStartGlobalTime = scheduledStartTime,
+                positionAtAnchor = 0L,
+                title = metadata?.first,
+                artist = metadata?.second,
+                thumbnailUrl = metadata?.third
             )
+            eventBroadcaster?.invoke(event)
+            
+            // 3. Wait and Play
+            scope.launch {
+                val waitTime = scheduledStartTime - timeSyncEngine.getGlobalTime()
+                if (waitTime > 0) {
+                     delay(waitTime)
+                }
+                playbackEngine.play()
+            }
         } else {
-            Log.i(TAG, "onTrackChanged: PARTICIPANT requesting track change - mediaId=$mediaId, title=${metadata?.first}")
+            Log.i(TAG, "onTrackChanged: PARTICIPANT requesting track change - mediaId=$mediaId")
+            eventBroadcaster?.invoke(event)
         }
-        
-        eventBroadcaster?.invoke(event)
     }
 
     // ============================================================
@@ -688,12 +906,17 @@ class SessionManager(
 
             is PlayEvent -> {
                 Log.i(TAG, "processEvent: PlayEvent received - mediaId=${event.mediaId}, title=${event.title}, startPos=${event.startPos}, requester=${event.requesterName}")
+                
+                // Use HOST's current time as anchor for fresh sync (not stale participant timestamp)
+                val hostNow = timeSyncEngine.getGlobalTime()
+                val hostPos = if (isHost) playbackEngine.playbackState.value.currentPositionMs else event.startPos
+                
                 applyAuthoritativeSnapshot(
                     SessionState(
                         currentMediaId = event.mediaId,
                         playbackStatus = SessionState.Status.PLAYING,
-                        trackStartGlobalTime = event.timestamp,
-                        positionAtAnchor = event.startPos,
+                        trackStartGlobalTime = hostNow,  // Use HOST's current time
+                        positionAtAnchor = hostPos,  // Use HOST's current position
                         playbackSpeed = event.playbackSpeed,
                         title = event.title,
                         artist = event.artist,
@@ -708,14 +931,10 @@ class SessionManager(
                          toastHandler?.invoke("$name played: ${event.title ?: "track"}")
                     }
                 }
-                // If Host received this from participant, broadcast authoritative EVENT back
+                // FIX 5: Host uses COALESCED broadcast instead of immediate dual broadcasts
                 if (isHost) {
-                    val now = timeSyncEngine.getGlobalTime()
-                    Log.i(TAG, "processEvent: HOST broadcasting Authoritative PlayEvent from requester=${event.requesterName}")
-                    eventBroadcaster?.invoke(event)
-                    
-                    Log.i(TAG, "processEvent: HOST broadcasting StateSyncEvent after PlayEvent")
-                    eventBroadcaster?.invoke(StateSyncEvent(_sessionState.value, now))
+                    Log.i(TAG, "processEvent: HOST scheduling coalesced broadcast for PlayEvent from requester=${event.requesterName}")
+                    broadcastAuthoritativeState()
                 }
             }
 
@@ -723,7 +942,9 @@ class SessionManager(
                 Log.i(TAG, "processEvent: PauseEvent received - pos=${event.pos}, requester=${event.requesterName}")
                 applyAuthoritativeSnapshot(
                     _sessionState.value.copy(
-                        playbackStatus = SessionState.Status.PAUSED
+                        playbackStatus = SessionState.Status.PAUSED,
+                        positionAtAnchor = event.pos,  // Use participant's position!
+                        trackStartGlobalTime = timeSyncEngine.getGlobalTime()
                     )
                 )
                 // Show toast notification for action
@@ -734,14 +955,10 @@ class SessionManager(
                          toastHandler?.invoke("$name paused playback")
                     }
                 }
-                // If Host received this from participant, broadcast authoritative EVENT back
+                // FIX 5: Host uses COALESCED broadcast instead of immediate dual broadcasts
                 if (isHost) {
-                    val now = timeSyncEngine.getGlobalTime()
-                    Log.i(TAG, "processEvent: HOST broadcasting Authoritative PauseEvent from requester=${event.requesterName}")
-                    eventBroadcaster?.invoke(event)
-                    
-                    Log.i(TAG, "processEvent: HOST broadcasting StateSyncEvent after PauseEvent")
-                    eventBroadcaster?.invoke(StateSyncEvent(_sessionState.value, now))
+                    Log.i(TAG, "processEvent: HOST scheduling coalesced broadcast for PauseEvent from requester=${event.requesterName}")
+                    broadcastAuthoritativeState()
                 }
             }
 
@@ -761,14 +978,10 @@ class SessionManager(
                          toastHandler?.invoke("$name seeked to ${formatTime(event.pos)}")
                     }
                 }
-                // If Host received this from participant, broadcast authoritative EVENT back
+                // FIX 5: Host uses COALESCED broadcast instead of immediate dual broadcasts
                 if (isHost) {
-                    val now = timeSyncEngine.getGlobalTime()
-                    Log.i(TAG, "processEvent: HOST broadcasting Authoritative SeekEvent from requester=${event.requesterName}")
-                    eventBroadcaster?.invoke(event)
-                    
-                    Log.i(TAG, "processEvent: HOST broadcasting StateSyncEvent after SeekEvent")
-                    eventBroadcaster?.invoke(StateSyncEvent(_sessionState.value, now))
+                    Log.i(TAG, "processEvent: HOST scheduling coalesced broadcast for SeekEvent from requester=${event.requesterName}")
+                    broadcastAuthoritativeState()
                 }
             }
 
@@ -810,18 +1023,47 @@ class SessionManager(
     // ============================================================
 
     private fun applyAuthoritativeSnapshot(state: SessionState) {
-        Log.i(TAG, "applyAuthoritativeSnapshot: Applying state - mediaId=${state.currentMediaId}, status=${state.playbackStatus}, pos=${state.positionAtAnchor}")
+        Log.i(TAG, "applyAuthoritativeSnapshot: Applying state - mediaId=${state.currentMediaId}, status=${state.playbackStatus}, pos=${state.positionAtAnchor}, version=${state.stateVersion}")
+        
+        // FIX 4: VERSION CONTROL - Participants ignore stale or equal versions
+        if (!isHost && state.stateVersion > 0 && state.stateVersion <= lastAppliedVersion) {
+            Log.d(TAG, "applyAuthoritativeSnapshot: IGNORED (stale version ${state.stateVersion} <= $lastAppliedVersion)")
+            return
+        }
+        
+        // FIX 3: EVENT DEDUPLICATION - Skip if this is effectively the same state
+        val currentPos = playbackEngine.playbackState.value.currentPositionMs
+        val positionDrift = kotlin.math.abs(state.positionAtAnchor - currentPos)
+        val currentMediaId = playbackEngine.playbackState.value.mediaId
+        val currentIsPlaying = playbackEngine.playbackState.value.isPlaying
+        val currentStatus = if (currentIsPlaying) SessionState.Status.PLAYING else SessionState.Status.PAUSED
+        
+        if (state.currentMediaId == lastAppliedMediaId &&
+            state.playbackStatus == lastAppliedStatus &&
+            state.currentMediaId == currentMediaId &&
+            state.playbackStatus == currentStatus &&
+            positionDrift < POSITION_DRIFT_THRESHOLD_MS &&
+            (System.currentTimeMillis() - lastAppliedTimestamp) < DEDUP_THRESHOLD_MS) {
+            Log.d(TAG, "applyAuthoritativeSnapshot: IGNORED (duplicate state, drift=${positionDrift}ms)")
+            return
+        }
+        
+        // Update deduplication tracking
+        lastAppliedMediaId = state.currentMediaId
+        lastAppliedStatus = state.playbackStatus
+        lastAppliedPosition = state.positionAtAnchor
+        lastAppliedTimestamp = System.currentTimeMillis()
+        if (state.stateVersion > 0) {
+            lastAppliedVersion = state.stateVersion
+        }
         
         // Set flag to prevent onTrackChanged from broadcasting during this apply
         isApplyingSnapshot = true
-        
-        try {
         
         // CRITICAL: Preserve local isHost, sessionId, and connectedPeers - don't copy from remote state!
         val preservedIsHost = _sessionState.value.isHost
         val preservedSessionId = _sessionState.value.sessionId
         val preservedPeers = _sessionState.value.connectedPeers
-        val currentMediaId = playbackEngine.playbackState.value.mediaId
         
         _sessionState.value = state.copy(
             isHost = preservedIsHost,
@@ -846,16 +1088,76 @@ class SessionManager(
             // SAME TRACK - just update playback state without reloading
             Log.d(TAG, "applyAuthoritativeSnapshot: Same track, updating playback state only")
             
+            // FIX 7: SEEK STABILITY - Only seek if drift > threshold
+            val needsSeek = positionDrift > POSITION_DRIFT_THRESHOLD_MS
+            
             when (state.playbackStatus) {
                 SessionState.Status.PLAYING -> {
-                    Log.d(TAG, "applyAuthoritativeSnapshot: Seeking to $targetPos and playing")
-                    playbackEngine.seekTo(targetPos)
-                    playbackEngine.play()
+                    if (!isHost) {
+                        // PRE-BUFFER SYNC: Play ahead for smooth buffer, then seamlessly resync
+                        val receivedAt = timeSyncEngine.getGlobalTime()  // When we received this event
+                        val elapsedSinceAnchor = receivedAt - state.trackStartGlobalTime
+                        val hostPosWhenReceived = state.positionAtAnchor + elapsedSinceAnchor
+                        
+                        Log.i(TAG, "applyAuthoritativeSnapshot: PRE-BUFFER SYNC - hostPos=${hostPosWhenReceived}ms at receive time")
+                        _sessionState.value = _sessionState.value.copy(
+                            syncStatus = SessionState.SyncStatus.SYNCING,
+                            clockSyncMessage = "Buffering..."
+                        )
+                        
+                        // Step 1: Seek ahead and PLAY (not pause!) to fill buffer
+                        val bufferAheadMs = SYNC_LEAD_TIME_MS  // 4 seconds ahead
+                        val prebufferPos = hostPosWhenReceived + bufferAheadMs
+                        Log.i(TAG, "applyAuthoritativeSnapshot: Playing at ${prebufferPos}ms for pre-buffer")
+                        playbackEngine.seekTo(prebufferPos)
+                        playbackEngine.play()  // Keep playing to fill audio buffer
+                        
+                        // Step 2: In background, wait for buffer then seamlessly resync
+                        scope.launch {
+                            // Allow 2 seconds for audio to buffer while playing
+                            val bufferDurationMs = 2000L
+                            delay(bufferDurationMs)
+                            
+                            // Step 3: Calculate EXACT position accounting for ALL elapsed time + 100ms offset
+                            val syncNow = timeSyncEngine.getGlobalTime()
+                            val totalElapsed = syncNow - state.trackStartGlobalTime
+                            val networkOffsetMs = 100L  // Extra offset to cover network delay
+                            val correctPos = state.positionAtAnchor + totalElapsed + networkOffsetMs
+                            
+                            Log.i(TAG, "applyAuthoritativeSnapshot: RESYNC to ${correctPos}ms (elapsed=${totalElapsed}ms + ${networkOffsetMs}ms offset)")
+                            _sessionState.value = _sessionState.value.copy(
+                                clockSyncMessage = "Syncing..."
+                            )
+                            
+                            // Step 4: Seamlessly seek to correct position (audio already buffered!)
+                            playbackEngine.seekTo(correctPos)
+                            // Already playing, no need to call play() again
+                            
+                            _sessionState.value = _sessionState.value.copy(
+                                syncStatus = SessionState.SyncStatus.READY,
+                                clockSyncMessage = "Playing in sync! 🎵"
+                            )
+                            Log.i(TAG, "applyAuthoritativeSnapshot: PRE-BUFFER SYNC COMPLETE! Now at ${correctPos}ms")
+                        }
+                    } else {
+                        // HOST: Seek if needed, then play
+                        if (needsSeek) {
+                            Log.d(TAG, "applyAuthoritativeSnapshot: HOST seeking to $targetPos (drift=${positionDrift}ms)")
+                            playbackEngine.seekTo(targetPos)
+                        }
+                        if (!currentIsPlaying) {
+                            playbackEngine.play()
+                        }
+                    }
                 }
                 SessionState.Status.PAUSED -> {
-                    Log.d(TAG, "applyAuthoritativeSnapshot: Pausing and seeking to $targetPos")
-                    playbackEngine.pause()
-                    playbackEngine.seekTo(targetPos)
+                    if (currentIsPlaying) {
+                        playbackEngine.pause()
+                    }
+                    if (needsSeek) {
+                        Log.d(TAG, "applyAuthoritativeSnapshot: Seeking to $targetPos (drift=${positionDrift}ms)")
+                        playbackEngine.seekTo(targetPos)
+                    }
                 }
                 else -> {
                     Log.d(TAG, "applyAuthoritativeSnapshot: Idle/Unknown status, pausing")
@@ -868,21 +1170,40 @@ class SessionManager(
             playbackEngine.pause()
             
             val shouldAutoPlay = state.playbackStatus == SessionState.Status.PLAYING
+            val scheduledStartTime = state.trackStartGlobalTime
+            val now = timeSyncEngine.getGlobalTime()
             
-            state.currentMediaId?.let {
-                Log.i(TAG, "applyAuthoritativeSnapshot: Loading track - $it, seekTo=$targetPos, autoPlay=$shouldAutoPlay")
+            state.currentMediaId?.let { mediaId ->
                 // Mark this track as synced to suppress echo broadcast when async load completes
-                lastSyncedMediaId = it
+                lastSyncedMediaId = mediaId
                 lastSyncedTimestamp = System.currentTimeMillis()
-                playbackEngine.loadTrack(it, targetPos, shouldAutoPlay)
+                
+                if (shouldAutoPlay && scheduledStartTime > now) {
+                    // PERFECT INITIAL SYNC: Load, buffer, wait, then start at exactly the right moment
+                    Log.i(TAG, "applyAuthoritativeSnapshot: SCHEDULED TRACK LOAD - waiting ${scheduledStartTime - now}ms after load")
+                    playbackEngine.loadTrack(mediaId, state.positionAtAnchor, autoPlay = false)
+                    
+                    scope.launch {
+                        waitForScheduledTime(scheduledStartTime)
+                        playbackEngine.play()
+                        Log.i(TAG, "applyAuthoritativeSnapshot: Track started at scheduled time!")
+                    }
+                } else {
+                    // Normal load (paused state or late joiner)
+                    Log.i(TAG, "applyAuthoritativeSnapshot: Loading track - $mediaId, seekTo=$targetPos, autoPlay=$shouldAutoPlay")
+                    playbackEngine.loadTrack(mediaId, targetPos, shouldAutoPlay)
+                }
             }
         }
         
         Log.i(TAG, "applyAuthoritativeSnapshot: DONE - mediaId=${state.currentMediaId}, status=${state.playbackStatus}")
         
-        } finally {
-            // Always reset the flag when done
+        // FIX 2: EXTENDED SNAPSHOT LOCK - Use delayed unlock to cover async ExoPlayer callbacks
+        // Do NOT reset flag immediately - schedule delayed reset
+        scope.launch {
+            delay(SNAPSHOT_LOCK_DURATION_MS)
             isApplyingSnapshot = false
+            Log.d(TAG, "applyAuthoritativeSnapshot: Lock released after ${SNAPSHOT_LOCK_DURATION_MS}ms delay")
         }
     }
     

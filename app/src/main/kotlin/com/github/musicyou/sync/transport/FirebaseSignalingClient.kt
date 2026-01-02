@@ -130,7 +130,11 @@ class FirebaseSignalingClient(
             }
             
             // Mark as joined
-            roomRef.update("participantConnected", true).await()
+            try {
+                roomRef.update("participantConnected", true).await()
+            } catch (e: Exception) {
+                Log.w(TAG, "FirebaseSignaling: Failed to update participantConnected (room might be closed)", e)
+            }
         }
     }
     
@@ -140,10 +144,14 @@ class FirebaseSignalingClient(
         val fieldPrefix = if (isHost) "host" else "participant"
         Log.i(TAG, "FirebaseSignaling: Sending SDP (${sdp.type})")
         
-        roomRef.update(
-            "${fieldPrefix}Sdp", sdp.description,
-            "${fieldPrefix}SdpType", sdp.type.canonicalForm()
-        ).await()
+        try {
+            roomRef.update(
+                "${fieldPrefix}Sdp", sdp.description,
+                "${fieldPrefix}SdpType", sdp.type.canonicalForm()
+            ).await()
+        } catch (e: Exception) {
+            Log.w(TAG, "FirebaseSignaling: Failed to send SDP (room might be closed)", e)
+        }
     }
     
     override suspend fun sendIce(candidate: IceCandidate) {
@@ -152,11 +160,15 @@ class FirebaseSignalingClient(
         val collectionName = if (isHost) "hostIce" else "participantIce"
         Log.d(TAG, "FirebaseSignaling: Sending ICE candidate")
         
-        roomRef.collection(collectionName).add(mapOf(
-            "sdpMid" to candidate.sdpMid,
-            "sdpMLineIndex" to candidate.sdpMLineIndex,
-            "sdp" to candidate.sdp
-        )).await()
+        try {
+            roomRef.collection(collectionName).add(mapOf(
+                "sdpMid" to candidate.sdpMid,
+                "sdpMLineIndex" to candidate.sdpMLineIndex,
+                "sdp" to candidate.sdp
+            )).await()
+        } catch (e: Exception) {
+            Log.w(TAG, "FirebaseSignaling: Failed to send ICE (room might be closed)", e)
+        }
     }
     
     override suspend fun connect() {
