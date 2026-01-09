@@ -35,12 +35,12 @@ An Android application for streaming music from YouTube Music.
 ## 📸 Screenshots
 
 <div>
-    <img src="./screenshots/screenshot_player.png" alt="Player" style="width: 30%;">
-    <img src="./screenshots/screenshot_home.png" alt="Home" style="width: 30%;">
-    <img src="./screenshots/screenshot_artist.png" alt="Artist" style="width: 30%;">
-    <img src="./screenshots/screenshot_songs.png" alt="Songs" style="width: 30%;">
-    <img src="./screenshots/screenshot_artists.png" alt="Artists" style="width: 30%;">
-    <img src="./screenshots/screenshot_albums.png" alt="Albums" style="width: 30%;">
+    <img src="./screenshots/screenshot_player.jpg" alt="Player" style="width: 30%;">
+    <img src="./screenshots/screenshot_home.jpg" alt="Home" style="width: 30%;">
+    <img src="./screenshots/screenshot_artist.jpg" alt="Artist" style="width: 30%;">
+    <img src="./screenshots/screenshot_songs.jpg" alt="Songs" style="width: 30%;">
+    <img src="./screenshots/screenshot_artists.jpg" alt="Artists" style="width: 30%;">
+    <img src="./screenshots/screenshot_albums.jpg" alt="Albums" style="width: 30%;">
 </div>
 
 ## 📲 Installation
