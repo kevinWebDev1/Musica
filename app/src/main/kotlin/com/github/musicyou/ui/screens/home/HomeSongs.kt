@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -45,7 +46,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import com.github.musicyou.Database
+import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.R
@@ -85,6 +89,23 @@ fun HomeSongs(
     val binder = LocalPlayerServiceBinder.current
     val menuState = LocalMenuState.current
     val playerPadding = LocalPlayerPadding.current
+
+    var currentMediaItem by remember { mutableStateOf(binder?.player?.currentMediaItem) }
+
+    binder?.player?.let { player ->
+        player.DisposableListener {
+            object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    currentMediaItem = mediaItem
+                }
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                        currentMediaItem = player.currentMediaItem
+                    }
+                }
+            }
+        }
+    }
 
     var sortBy by rememberPreference(songSortByKey, SongSortBy.Title)
     var sortOrder by rememberPreference(songSortOrderKey, SortOrder.Ascending)
@@ -200,6 +221,7 @@ fun HomeSongs(
                 ) {
                     LocalSongItem(
                         song = song,
+                        isPlaying = currentMediaItem?.mediaId == song.id,
                         onClick = {
                             binder?.stopRadio()
                             binder?.player?.forcePlayAtIndex(

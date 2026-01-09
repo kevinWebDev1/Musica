@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.Icon
@@ -31,40 +33,106 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.github.musicyou.ui.components.MusicBars
 import com.github.musicyou.ui.components.TextPlaceholder
+import com.github.musicyou.ui.styling.NeumorphicColors
+import com.github.musicyou.ui.styling.neumorphicPressed
+import com.github.musicyou.ui.styling.neumorphicRaised
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.ui.styling.shimmer
 
 @Composable
 fun ItemContainer(
     modifier: Modifier = Modifier,
     isPlaceholder: Boolean = false,
+    isPlaying: Boolean = false,
+    fullCard: Boolean = false,
     title: String,
     subtitle: String? = null,
     onClick: (() -> Unit)? = null,
     textAlign: TextAlign = TextAlign.Start,
     shape: Shape = MaterialTheme.shapes.large,
+    cornerRadius: Dp = 12.dp,
+    containerColor: Color? = null,
+    contentColor: Color? = null,
+    neumorphicColors: NeumorphicColors? = null,
     color: Color = MaterialTheme.colorScheme.surfaceVariant,
     thumbnail: @Composable () -> Unit
 ) {
+    val currentNeumorphicColors = neumorphicColors ?: rememberNeumorphicColors()
+
     Column(
         modifier = modifier
             .widthIn(max = 200.dp)
-            .clip(MaterialTheme.shapes.large)
+            .padding(12.dp) // Space for shadows
+            .then(
+                if (fullCard) {
+                    if (isPlaying) {
+                        Modifier.neumorphicPressed(cornerRadius = cornerRadius, colors = currentNeumorphicColors)
+                    } else {
+                        Modifier.neumorphicRaised(
+                            shadowOffset = 3.dp,
+                            shadowRadius = 5.dp,
+                            cornerRadius = cornerRadius,
+                            colors = currentNeumorphicColors
+                        )
+                    }
+                } else Modifier
+            )
+            .then(if (fullCard) Modifier.clip(shape) else Modifier)
+            .then(
+                if (fullCard) Modifier.background(containerColor ?: currentNeumorphicColors.background) else Modifier
+            )
             .clickable(
                 enabled = onClick != null,
                 onClick = onClick ?: {}
             )
-            .padding(8.dp)
+            .then(
+                if (fullCard) Modifier.padding(12.dp) else Modifier // Internal padding for content
+            )
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(ratio = 1F)
+                .then(
+                    if (!fullCard) {
+                        if (isPlaying) {
+                            Modifier.neumorphicPressed(cornerRadius = cornerRadius, colors = currentNeumorphicColors)
+                        } else {
+                            Modifier.neumorphicRaised(
+                                shadowOffset = 3.dp,
+                                shadowRadius = 5.dp,
+                                cornerRadius = cornerRadius,
+                                colors = currentNeumorphicColors
+                            )
+                        }
+                    } else Modifier
+                )
                 .clip(shape)
-                .background(color),
+                .background(if (isPlaceholder) color else if (!fullCard) currentNeumorphicColors.background else Color.Transparent),
             contentAlignment = Alignment.Center
         ) {
-            thumbnail()
+            Box(modifier = Modifier.padding(if (fullCard) 0.dp else 6.dp).clip(shape)) {
+                thumbnail()
+            }
+            
+            if (isPlaying && !fullCard) {
+                 Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(30.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                ) {
+                    MusicBars(
+                        modifier = Modifier
+                            .height(16.dp)
+                            .align(Alignment.Center),
+                        color = Color.White
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -78,11 +146,14 @@ fun ItemContainer(
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = textAlign,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                color = contentColor ?: currentNeumorphicColors.onBackground
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        if (subtitle != null || isPlaceholder) {
+            Spacer(modifier = Modifier.height(4.dp))
+        }
 
         if (isPlaceholder) {
             TextPlaceholder()
@@ -94,7 +165,8 @@ fun ItemContainer(
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = textAlign,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    color = (contentColor ?: currentNeumorphicColors.onBackground).copy(alpha = 0.7f)
                 )
             }
         }
@@ -121,6 +193,7 @@ fun ItemPlaceholder(
 fun ListItemContainer(
     modifier: Modifier = Modifier,
     isPlaceholder: Boolean = false,
+    isPlaying: Boolean = false,
     title: String,
     subtitle: String? = null,
     onClick: (() -> Unit)? = null,
@@ -133,66 +206,104 @@ fun ListItemContainer(
     thumbnailAspectRatio: Float = 1F,
     trailingContent: @Composable (() -> Unit)? = null
 ) {
-    ListItem(
-        headlineContent = {
-            if (isPlaceholder) {
-                TextPlaceholder()
-            } else {
-                Text(
-                    text = title,
-                    lineHeight = 16.sp,
-                    maxLines = maxLines,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        },
+    val neumorphicColors = rememberNeumorphicColors()
+
+    Box(
         modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 8.dp) // Increase horizontal room for shadows
+            .then(
+                if (isPlaying) {
+                     Modifier.neumorphicPressed(
+                        cornerRadius = 12.dp
+                    )
+                } else {
+                    Modifier.neumorphicRaised(
+                        shadowOffset = 3.dp,
+                        shadowRadius = 5.dp,
+                        cornerRadius = 12.dp
+                    )
+                }
+            )
             .clip(MaterialTheme.shapes.large)
-            .combinedClickable(
-                enabled = onClick != null || onLongClick != null,
-                onClick = onClick ?: {},
-                onLongClick = onLongClick ?: {}
-            ),
-        supportingContent = {
-            if (isPlaceholder) {
-                TextPlaceholder()
-            } else {
-                subtitle?.let {
+            // No background here, ListItem handles it or we override
+    ) {
+        ListItem(
+            headlineContent = {
+                if (isPlaceholder) {
+                    TextPlaceholder()
+                } else {
                     Text(
-                        text = subtitle,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = title,
+                        lineHeight = 16.sp,
+                        maxLines = maxLines,
+                        overflow = TextOverflow.Ellipsis,
+                        color = neumorphicColors.onBackground // Use neumorphic text color
                     )
                 }
-            }
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .height(height = thumbnailHeight)
-                    .aspectRatio(ratio = thumbnailAspectRatio)
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(color),
-                contentAlignment = Alignment.Center
-            ) {
-                thumbnail(thumbnailHeight)
-            }
-        },
-        trailingContent = {
-            if (trailingContent != null) trailingContent()
-            else if (onLongClick != null) {
-                IconButton(onClick = onLongClick) {
-                    Icon(
-                        imageVector = Icons.Outlined.MoreVert,
-                        contentDescription = null
-                    )
+            },
+            modifier = Modifier
+                .combinedClickable(
+                    enabled = onClick != null || onLongClick != null,
+                    onClick = onClick ?: {},
+                    onLongClick = onLongClick ?: {}
+                ),
+            supportingContent = {
+                if (isPlaceholder) {
+                    TextPlaceholder()
+                } else {
+                    subtitle?.let {
+                        Text(
+                            text = subtitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = neumorphicColors.onBackground.copy(alpha = 0.7f) // Subtitle color
+                        )
+                    }
                 }
-            }
-        },
-        colors = ListItemDefaults.colors(
-            containerColor = containerColor
+            },
+            leadingContent = {
+                Box(
+                    modifier = Modifier
+                        .height(height = thumbnailHeight)
+                        .aspectRatio(ratio = thumbnailAspectRatio)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(color),
+                    contentAlignment = Alignment.Center
+                ) {
+                    thumbnail(thumbnailHeight)
+                    
+                    if (isPlaying) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.4f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            MusicBars(
+                                modifier = Modifier.height(12.dp),
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            },
+            trailingContent = {
+                if (trailingContent != null) trailingContent()
+                else if (onLongClick != null) {
+                    IconButton(onClick = onLongClick) {
+                        Icon(
+                            imageVector = Icons.Outlined.MoreVert,
+                            contentDescription = null,
+                            tint = neumorphicColors.onBackground
+                        )
+                    }
+                }
+            },
+            colors = ListItemDefaults.colors(
+                containerColor = neumorphicColors.background // Use neumorphic background
+            )
         )
-    )
+    }
 }
 
 @Composable

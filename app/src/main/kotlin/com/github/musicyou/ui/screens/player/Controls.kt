@@ -1,9 +1,11 @@
 package com.github.musicyou.ui.screens.player
 
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,22 +15,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.RepeatOne
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,7 +33,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
@@ -48,10 +41,11 @@ import com.github.musicyou.Database
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.models.Song
 import com.github.musicyou.query
-import com.github.musicyou.ui.components.SeekBar
-import com.github.musicyou.ui.styling.Dimensions
-import com.github.musicyou.utils.forceSeekToNext
-import com.github.musicyou.utils.forceSeekToPrevious
+import com.github.musicyou.ui.components.SeekBar  // Using original SeekBar
+import com.github.musicyou.ui.styling.NeumorphicIconButton
+import com.github.musicyou.ui.styling.NeumorphicPlayButton
+import com.github.musicyou.ui.styling.NeumorphicToggleButton
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.utils.formatAsDuration
 import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.utils.trackLoopEnabledKey
@@ -71,14 +65,23 @@ fun Controls(
     val binder = LocalPlayerServiceBinder.current
     binder?.player ?: return
 
+    // Get pure neumorphic colors
+    val neumorphicColors = rememberNeumorphicColors()
+
     var trackLoopEnabled by rememberPreference(trackLoopEnabledKey, defaultValue = false)
     var scrubbingPosition by remember(mediaId) { mutableStateOf<Long?>(null) }
     var likedAt by rememberSaveable { mutableStateOf<Long?>(null) }
-    val shouldBePlayingTransition = updateTransition(shouldBePlaying, label = "shouldBePlaying")
-    val playPauseRoundness by shouldBePlayingTransition.animateDp(
-        transitionSpec = { tween(durationMillis = 100, easing = LinearEasing) },
-        label = "playPauseRoundness",
-        targetValueByState = { if (it) 16.dp else 32.dp }
+
+    // Pulsing glow for play button when playing
+    val infiniteTransition = rememberInfiniteTransition(label = "controlsGlow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "playButtonGlow"
     )
 
     LaunchedEffect(mediaId) {
@@ -91,42 +94,41 @@ fun Controls(
             .fillMaxWidth()
             .padding(horizontal = 32.dp)
     ) {
-        Spacer(
-            modifier = Modifier.weight(1f)
-        )
+        Spacer(modifier = Modifier.weight(1f))
 
+        // Title with neumorphic text color
         Text(
             text = title,
             modifier = Modifier.basicMarquee(),
-            style = MaterialTheme.typography.titleMedium,
+            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+            color = neumorphicColors.onBackground,
             maxLines = 1
         )
 
         Spacer(modifier = Modifier.height(4.dp))
 
+        // Artist with neumorphic text color
         Text(
             text = artist,
             modifier = Modifier.clickable(
                 enabled = onGoToArtist != null,
                 onClick = onGoToArtist ?: {}
             ),
-            style = MaterialTheme.typography.bodyLarge,
+            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+            color = neumorphicColors.onBackground.copy(alpha = 0.7f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
 
-        Spacer(
-            modifier = Modifier.weight(0.5f)
-        )
+        Spacer(modifier = Modifier.weight(0.5f))
 
+        // Using enhanced Neumorphic SeekBar (Minimalist Track Look)
         SeekBar(
             value = scrubbingPosition ?: position,
             minimumValue = 0,
             maximumValue = duration,
-            onDragStart = {
-                scrubbingPosition = it
-            },
-            onDrag = { delta ->
+            onDragStart = { scrubbingPosition = it },
+            onDrag = { delta: Long ->
                 scrubbingPosition = if (duration != C.TIME_UNSET) {
                     scrubbingPosition?.plus(delta)?.coerceIn(0, duration)
                 } else {
@@ -137,15 +139,15 @@ fun Controls(
                 scrubbingPosition?.let { binder.syncSeekTo(it) }
                 scrubbingPosition = null
             },
-            color = MaterialTheme.colorScheme.primary,
-            backgroundColor = MaterialTheme.colorScheme.primaryContainer,
-            shape = RoundedCornerShape(8.dp)
+            color = neumorphicColors.onBackground.copy(alpha = 0.8f), // Progress fill
+            backgroundColor = neumorphicColors.background, // Track background
+            barHeight = 10.dp,
+            shape = CircleShape
         )
 
-        Spacer(
-            modifier = Modifier.height(8.dp)
-        )
+        Spacer(modifier = Modifier.height(8.dp))
 
+        // Time display with neumorphic colors
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -153,7 +155,8 @@ fun Controls(
         ) {
             Text(
                 text = formatAsDuration(scrubbingPosition ?: position),
-                style = MaterialTheme.typography.labelMedium,
+                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                color = neumorphicColors.onBackground.copy(alpha = 0.6f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -161,23 +164,25 @@ fun Controls(
             if (duration != C.TIME_UNSET) {
                 Text(
                     text = formatAsDuration(duration),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    color = neumorphicColors.onBackground.copy(alpha = 0.6f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
-        Spacer(
-            modifier = Modifier.weight(1f)
-        )
+        Spacer(modifier = Modifier.weight(1f))
 
+        // Neumorphic control buttons
         Row(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(
+            // Like button
+            NeumorphicToggleButton(
+                isActive = likedAt != null,
                 onClick = {
                     val currentMediaItem = binder.player.currentMediaItem
                     query {
@@ -188,89 +193,66 @@ fun Controls(
                         ) {
                             currentMediaItem
                                 ?.takeIf { it.mediaId == mediaId }
-                                ?.let {
-                                    Database.insert(currentMediaItem, Song::toggleLike)
-                                }
+                                ?.let { Database.insert(currentMediaItem, Song::toggleLike) }
                         }
                     }
                 },
-                modifier = Modifier.weight(1F)
-            ) {
-                Icon(
-                    imageVector = if (likedAt == null) Icons.Outlined.FavoriteBorder else Icons.Filled.Favorite,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                    tint = MaterialTheme.colorScheme.error
-                )
-            }
+                icon = if (likedAt == null) Icons.Outlined.FavoriteBorder else Icons.Filled.Favorite,
+                size = 44.dp,
+                iconSize = 24.dp,
+                activeTint = androidx.compose.ui.graphics.Color(0xFFE57373),  // Soft red
+                inactiveTint = neumorphicColors.onBackground.copy(alpha = 0.5f)
+            )
 
-            IconButton(
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Skip Previous
+            NeumorphicIconButton(
                 onClick = { binder.syncSkipPrevious() },
-                modifier = Modifier.weight(1F)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.SkipPrevious,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-
-            Spacer(
-                modifier = Modifier.width(8.dp)
+                icon = Icons.Outlined.SkipPrevious,
+                size = 48.dp,
+                iconSize = 26.dp,
+                tint = neumorphicColors.onBackground
             )
 
-            FilledIconButton(
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Play/Pause - Larger central button
+            NeumorphicPlayButton(
+                isPlaying = shouldBePlaying,
+                isEnded = binder.player.playbackState == Player.STATE_ENDED,
                 onClick = {
-                    if (shouldBePlaying) {
-                        binder.syncPause()
-                    } else {
-                        binder.syncPlay()
-                    }
+                    if (shouldBePlaying) binder.syncPause() else binder.syncPlay()
                 },
-                modifier = Modifier.size(64.dp),
-                shape = RoundedCornerShape(playPauseRoundness)
-            ) {
-                Icon(
-                    imageVector =
-                    if (shouldBePlaying) Icons.Filled.Pause
-                    else if (binder.player.playbackState == Player.STATE_ENDED) Icons.Filled.Replay
-                    else Icons.Filled.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-
-            Spacer(
-                modifier = Modifier.width(8.dp)
+                size = 72.dp,
+                iconSize = 32.dp
             )
 
-            IconButton(
-                onClick = { binder.syncSkipNext() },
-                modifier = Modifier.weight(1F)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.SkipNext,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+            Spacer(modifier = Modifier.width(16.dp))
 
-            IconButton(
+            // Skip Next
+            NeumorphicIconButton(
+                onClick = { binder.syncSkipNext() },
+                icon = Icons.Outlined.SkipNext,
+                size = 48.dp,
+                iconSize = 26.dp,
+                tint = neumorphicColors.onBackground
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Repeat button
+            NeumorphicToggleButton(
+                isActive = trackLoopEnabled,
                 onClick = { trackLoopEnabled = !trackLoopEnabled },
-                modifier = Modifier.weight(1F)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.RepeatOne,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .alpha(if (trackLoopEnabled) 1F else Dimensions.lowOpacity)
-                        .size(28.dp)
-                )
-            }
+                icon = Icons.Outlined.RepeatOne,
+                size = 44.dp,
+                iconSize = 24.dp,
+                activeTint = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                inactiveTint = neumorphicColors.onBackground.copy(alpha = 0.5f)
+            )
         }
 
-        Spacer(
-            modifier = Modifier.weight(1f)
-        )
+        Spacer(modifier = Modifier.weight(1f))
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
@@ -34,7 +35,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,6 +60,7 @@ import com.github.musicyou.R
 import com.github.musicyou.models.LocalMenuState
 import com.github.musicyou.ui.components.TooltipIconButton
 import com.github.musicyou.ui.components.BaseMediaItemMenu
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.isLandscape
 import com.github.musicyou.utils.positionAndDurationState
@@ -183,11 +184,19 @@ fun Player(
         )
     }
 
-    Column(
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    // Get neumorphic colors for the player screen
+    val neumorphicColors = rememberNeumorphicColors()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(neumorphicColors.background)
     ) {
-        Box(
-            modifier = Modifier.weight(1F)
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Box(
+                modifier = Modifier.weight(1F)
         ) {
             if (isLandscape) {
                 Row(
@@ -238,14 +247,14 @@ fun Player(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(BottomSheetDefaults.ExpandedShape)
-                .clickable { isQueueOpen = true }
-                .background(MaterialTheme.colorScheme.surfaceColorAtElevation(5.dp))
-                .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(BottomSheetDefaults.ExpandedShape)
+                    .clickable { isQueueOpen = true }
+                    .background(neumorphicColors.background)
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onVerticalDrag = { _, dragAmount ->
@@ -347,6 +356,7 @@ fun Player(
                     onGoToAlbum = onGoToAlbum,
                     onGoToArtist = onGoToArtist
                 )
+            }
             }
         }
     }

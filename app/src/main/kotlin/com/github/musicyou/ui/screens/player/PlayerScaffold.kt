@@ -89,7 +89,7 @@ fun PlayerScaffold(
                 }
             },
             scaffoldState = scaffoldState,
-            sheetPeekHeight = 76.dp + 16.dp + scaffoldPadding.calculateBottomPadding(),
+            sheetPeekHeight = 76.dp + 32.dp + scaffoldPadding.calculateBottomPadding(),
             sheetMaxWidth = Int.MAX_VALUE.dp,
             sheetDragHandle = {
                 Surface(
@@ -102,7 +102,7 @@ fun PlayerScaffold(
             }
         ) {
             val bottomPadding = animateDpAsState(
-                targetValue = if (sheetState.currentValue == SheetValue.Hidden) scaffoldPadding.calculateBottomPadding() else scaffoldPadding.calculateBottomPadding() + 76.dp + 16.dp,
+                targetValue = if (sheetState.currentValue == SheetValue.Hidden) scaffoldPadding.calculateBottomPadding() else scaffoldPadding.calculateBottomPadding() + 76.dp + 32.dp,
                 label = "padding"
             )
 

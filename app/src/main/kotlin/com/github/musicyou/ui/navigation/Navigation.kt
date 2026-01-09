@@ -8,7 +8,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraphBuilder
@@ -31,8 +33,12 @@ import com.github.musicyou.ui.screens.playlist.PlaylistScreen
 import com.github.musicyou.ui.screens.search.SearchScreen
 import com.github.musicyou.ui.screens.settings.SettingsPage
 import com.github.musicyou.ui.screens.settings.SettingsScreen
+import com.github.musicyou.ui.screens.onboarding.OnboardingScreen
 import com.github.musicyou.utils.homeScreenTabIndexKey
+import com.github.musicyou.utils.onboardedKey
 import com.github.musicyou.utils.rememberPreference
+import com.github.musicyou.utils.preferences
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import soup.compose.material.motion.animation.rememberSlideDistance
 import kotlin.reflect.KClass
@@ -51,9 +57,12 @@ fun Navigation(
     val slideDistance = rememberSlideDistance()
     val (screenIndex, _) = rememberPreference(homeScreenTabIndexKey, defaultValue = 0)
 
+    val context = LocalContext.current
+    val onboarded by rememberPreference(onboardedKey, defaultValue = false)
+
     NavHost(
         navController = navController,
-        startDestination = TopDestinations.routes.getOrElse(
+        startDestination = if (!onboarded) Routes.Onboarding::class else TopDestinations.routes.getOrElse(
             index = screenIndex,
             defaultValue = { Routes.Home }
         )::class,
@@ -249,6 +258,16 @@ fun Navigation(
                 pop = popDestination,
                 onGoToAlbum = navigateToAlbum,
                 onGoToArtist = navigateToArtist
+            )
+        }
+
+        playerComposable(route = Routes.Onboarding::class) {
+            OnboardingScreen(
+                onComplete = {
+                    navController.navigate(route = Routes.Home) {
+                        popUpTo(Routes.Onboarding) { inclusive = true }
+                    }
+                }
             )
         }
     }

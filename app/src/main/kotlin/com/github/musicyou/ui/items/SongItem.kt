@@ -21,12 +21,14 @@ import com.github.musicyou.utils.thumbnail
 fun SongItem(
     modifier: Modifier = Modifier,
     song: Innertube.SongItem,
+    isPlaying: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     trailingContent: @Composable (() -> Unit)? = null
 ) {
     ListItemContainer(
         modifier = modifier,
+        isPlaying = isPlaying,
         title = song.info?.name ?: "",
         subtitle = song.authors?.joinToString(separator = "") { it.name ?: "" },
         onClick = onClick,
@@ -49,6 +51,7 @@ fun SongItem(
 fun LocalSongItem(
     modifier: Modifier = Modifier,
     song: Song,
+    isPlaying: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     thumbnailContent: @Composable (() -> Unit)? = null,
@@ -57,6 +60,7 @@ fun LocalSongItem(
 ) {
     ListItemContainer(
         modifier = modifier,
+        isPlaying = isPlaying,
         title = song.title,
         subtitle = "${song.artistsText} • ${song.durationText}",
         onClick = onClick,
@@ -88,6 +92,7 @@ fun LocalSongItem(
 fun MediaSongItem(
     modifier: Modifier = Modifier,
     song: MediaItem,
+    isPlaying: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onThumbnailContent: @Composable (() -> Unit)? = null,
@@ -95,6 +100,7 @@ fun MediaSongItem(
 ) {
     ListItemContainer(
         modifier = modifier,
+        isPlaying = isPlaying,
         title = song.mediaMetadata.title.toString(),
         subtitle = if (song.mediaMetadata.extras?.getString("durationText") == null) {
             song.mediaMetadata.artist.toString()

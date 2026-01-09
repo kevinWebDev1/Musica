@@ -61,8 +61,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.github.musicyou.sync.SyncPreferences
-import com.github.musicyou.ui.components.NameEntryDialog
 
 class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
@@ -119,18 +117,6 @@ class MainActivity : ComponentActivity() {
                 },
                 skipHiddenState = false
             )
-
-            // Check if user name is set - show dialog if not
-            var showNameDialog by remember { mutableStateOf(!SyncPreferences.hasUserName(this@MainActivity)) }
-            
-            if (showNameDialog) {
-                NameEntryDialog(
-                    onNameEntered = { name ->
-                        SyncPreferences.setUserName(this@MainActivity, name)
-                        showNameDialog = false
-                    }
-                )
-            }
 
             AppTheme {
                 Box(modifier = Modifier.fillMaxSize()) {

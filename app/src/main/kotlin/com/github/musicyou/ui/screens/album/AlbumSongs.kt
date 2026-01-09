@@ -26,7 +26,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import com.github.musicyou.Database
+import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.R
@@ -57,6 +60,23 @@ fun AlbumSongs(
     val playerPadding = LocalPlayerPadding.current
 
     var songs: List<Song> by remember { mutableStateOf(emptyList()) }
+
+    var currentMediaItem by remember { mutableStateOf(binder?.player?.currentMediaItem) }
+
+    binder?.player?.let { player ->
+        player.DisposableListener {
+            object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    currentMediaItem = mediaItem
+                }
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                        currentMediaItem = player.currentMediaItem
+                    }
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         Database.albumSongs(browseId).collect { songs = it }
@@ -102,6 +122,7 @@ fun AlbumSongs(
         ) { index, song ->
             LocalSongItem(
                 song = song,
+                isPlaying = currentMediaItem?.mediaId == song.id,
                 onClick = {
                     binder?.stopRadio()
                     binder?.player?.forcePlayAtIndex(

@@ -1,26 +1,27 @@
 package com.github.musicyou.ui.components
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.PopupPositionProvider
 
+/**
+ * Icon button with tooltip showing on long press.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TooltipIconButton(
@@ -29,46 +30,31 @@ fun TooltipIconButton(
     icon: ImageVector,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    tint: Color = LocalContentColor.current,
     inTopBar: Boolean = false
 ) {
+    val tooltipState = rememberTooltipState()
+    
     TooltipBox(
-        positionProvider = rememberTooltipPosition(inTopBar = inTopBar),
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
         tooltip = {
             PlainTooltip {
                 Text(text = stringResource(id = description))
             }
         },
-        state = rememberTooltipState()
+        state = tooltipState
     ) {
         IconButton(
             onClick = onClick,
-            modifier = modifier,
-            enabled = enabled
+            enabled = enabled,
+            modifier = modifier
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = stringResource(id = description)
+                contentDescription = stringResource(id = description),
+                modifier = Modifier.size(if (inTopBar) 24.dp else 24.dp),
+                tint = if (enabled) tint else tint.copy(alpha = 0.38f)
             )
-        }
-    }
-}
-
-@Composable
-fun rememberTooltipPosition(inTopBar: Boolean): PopupPositionProvider {
-    val tooltipAnchorSpacing = with(LocalDensity.current) { 4.dp.roundToPx() }
-    return remember(tooltipAnchorSpacing) {
-        object : PopupPositionProvider {
-            override fun calculatePosition(
-                anchorBounds: IntRect,
-                windowSize: IntSize,
-                layoutDirection: LayoutDirection,
-                popupContentSize: IntSize
-            ): IntOffset {
-                val x = anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2
-                val y =
-                    if (inTopBar) anchorBounds.bottom + tooltipAnchorSpacing else anchorBounds.top - popupContentSize.height - tooltipAnchorSpacing
-                return IntOffset(x, y)
-            }
         }
     }
 }

@@ -17,6 +17,7 @@ import com.github.musicyou.R
 import com.github.musicyou.models.Artist
 import com.github.musicyou.ui.styling.px
 import com.github.musicyou.utils.thumbnail
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun ArtistItem(
@@ -33,6 +34,7 @@ fun ArtistItem(
         ),
         textAlign = TextAlign.Center,
         shape = CircleShape,
+        cornerRadius = 1000.dp,
         onClick = onClick
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -42,7 +44,7 @@ fun ArtistItem(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(maxWidth)
-                    .clip(MaterialTheme.shapes.large)
+                    .clip(CircleShape)
             )
         }
     }
@@ -59,6 +61,7 @@ fun LocalArtistItem(
         title = artist.name ?: "",
         textAlign = TextAlign.Center,
         shape = CircleShape,
+        cornerRadius = 1000.dp,
         onClick = onClick
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -66,7 +69,7 @@ fun LocalArtistItem(
                 model = artist.thumbnailUrl.thumbnail(maxWidth.px),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.clip(MaterialTheme.shapes.large)
+                modifier = Modifier.clip(CircleShape)
             )
         }
     }

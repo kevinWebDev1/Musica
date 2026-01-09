@@ -20,7 +20,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import com.github.musicyou.Database
+import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.R
@@ -48,6 +51,23 @@ fun ArtistLocalSongs(
     val binder = LocalPlayerServiceBinder.current
     val menuState = LocalMenuState.current
     val playerPadding = LocalPlayerPadding.current
+
+    var currentMediaItem by remember { mutableStateOf(binder?.player?.currentMediaItem) }
+
+    binder?.player?.let { player ->
+        player.DisposableListener {
+            object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    currentMediaItem = mediaItem
+                }
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                        currentMediaItem = player.currentMediaItem
+                    }
+                }
+            }
+        }
+    }
 
     var songs: List<Song>? by remember { mutableStateOf(null) }
 
@@ -100,6 +120,7 @@ fun ArtistLocalSongs(
             ) { index, song ->
                 LocalSongItem(
                     song = song,
+                    isPlaying = currentMediaItem?.mediaId == song.id,
                     onClick = {
                         binder?.stopRadio()
                         binder?.player?.forcePlayAtIndex(

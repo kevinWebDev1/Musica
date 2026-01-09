@@ -40,6 +40,7 @@ import androidx.media3.common.Player
 import coil3.compose.AsyncImage
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.ui.styling.Dimensions
+import com.github.musicyou.ui.styling.neumorphicRaised
 import com.github.musicyou.ui.styling.px
 import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.forceSeekToNext
@@ -111,6 +112,11 @@ fun MiniPlayer(
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
+                            .neumorphicRaised(
+                                shadowOffset = 4.dp,
+                                shadowRadius = 6.dp,
+                                cornerRadius = 12.dp
+                            )
                             .clip(MaterialTheme.shapes.medium)
                             .size(52.dp)
                     )

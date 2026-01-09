@@ -158,16 +158,16 @@ interface Database {
     @Query("SELECT * FROM Artist WHERE id = :id")
     fun artist(id: String): Flow<Artist?>
 
-    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL ORDER BY name DESC")
+    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT artistId FROM SongArtistMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY name DESC")
     fun artistsByNameDesc(): Flow<List<Artist>>
 
-    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL ORDER BY name ASC")
+    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT artistId FROM SongArtistMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY name ASC")
     fun artistsByNameAsc(): Flow<List<Artist>>
 
-    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt DESC")
+    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT artistId FROM SongArtistMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY bookmarkedAt DESC")
     fun artistsByRowIdDesc(): Flow<List<Artist>>
 
-    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt ASC")
+    @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT artistId FROM SongArtistMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY bookmarkedAt ASC")
     fun artistsByRowIdAsc(): Flow<List<Artist>>
 
     fun artists(sortBy: ArtistSortBy, sortOrder: SortOrder): Flow<List<Artist>> {
@@ -194,22 +194,22 @@ interface Database {
     @RewriteQueriesToDropUnusedColumns
     fun albumSongs(albumId: String): Flow<List<Song>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY title ASC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY title ASC")
     fun albumsByTitleAsc(): Flow<List<Album>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY year ASC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY year ASC")
     fun albumsByYearAsc(): Flow<List<Album>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt ASC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY bookmarkedAt ASC")
     fun albumsByRowIdAsc(): Flow<List<Album>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY title DESC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY title DESC")
     fun albumsByTitleDesc(): Flow<List<Album>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY year DESC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY year DESC")
     fun albumsByYearDesc(): Flow<List<Album>>
 
-    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL ORDER BY bookmarkedAt DESC")
+    @Query("SELECT * FROM Album WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT albumId FROM SongAlbumMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY bookmarkedAt DESC")
     fun albumsByRowIdDesc(): Flow<List<Album>>
 
     fun albums(sortBy: AlbumSortBy, sortOrder: SortOrder): Flow<List<Album>> {

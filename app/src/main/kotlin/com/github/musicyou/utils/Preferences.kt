@@ -38,6 +38,9 @@ const val navigationLabelsVisibilityKey = "navigationLabelsVisibility"
 const val listGesturesEnabledKey = "listGesturesEnabled"
 const val playerGesturesEnabledKey = "songGesturesEnabled"
 const val miniplayerGesturesEnabledKey = "miniplayerGesturesEnabled"
+const val contentRegionKey = "contentRegion"
+const val favoriteGenresKey = "favoriteGenres"
+const val onboardedKey = "onboarded"
 
 inline fun <reified T : Enum<T>> SharedPreferences.getEnum(
     key: String,

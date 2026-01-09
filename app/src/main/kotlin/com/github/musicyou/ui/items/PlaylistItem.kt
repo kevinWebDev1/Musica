@@ -13,9 +13,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import coil3.compose.AsyncImage
 import com.github.innertube.Innertube
 import com.github.musicyou.Database
@@ -37,7 +39,8 @@ fun PlaylistItem(
         modifier = modifier,
         title = playlist.info?.name ?: "",
         subtitle = playlist.channel?.name,
-        onClick = onClick
+        onClick = onClick,
+        fullCard = true
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             AsyncImage(
@@ -59,15 +62,20 @@ fun BuiltInPlaylistItem(
     name: String,
     onClick: () -> Unit
 ) {
+    val isFavorites = name == stringResource(id = R.string.favorites)
+    val favoriteColor = Color(0xFFE91E63) // Vibrant Rosy Red (Material Pink 500)
+    
     ItemContainer(
         modifier = modifier,
         title = name,
-        onClick = onClick
+        onClick = onClick,
+        fullCard = true,
+        contentColor = if (isFavorites) favoriteColor else null
     ) {
         Icon(
             imageVector = icon,
             contentDescription = name,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            tint = if (isFavorites) favoriteColor else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -86,7 +94,8 @@ fun LocalPlaylistItem(
             count = playlist.songCount,
             playlist.songCount
         ),
-        onClick = onClick
+        onClick = onClick,
+        fullCard = true
     ) {
         BoxWithConstraints(
             modifier = Modifier

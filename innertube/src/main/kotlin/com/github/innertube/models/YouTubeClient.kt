@@ -12,7 +12,9 @@ class YouTubeClient(
 ) {
     fun toContext(
         localized: Boolean = true,
-        visitorData: String? = null
+        visitorData: String? = null,
+        gl: String? = null,
+        hl: String? = null
     ) = Context(
         client = Context.Client(
             clientName = clientName,
@@ -21,8 +23,8 @@ class YouTubeClient(
             osVersion = osVersion,
             platform = platform,
             userAgent = userAgent,
-            gl = if (localized) Locale.getDefault().country else "US",
-            hl = if (localized) Locale.getDefault().toLanguageTag() else "en",
+            gl = gl ?: if (localized) Locale.getDefault().country.takeIf { it.isNotEmpty() } ?: "US" else "US",
+            hl = hl ?: if (localized) Locale.getDefault().toLanguageTag().takeIf { it.isNotEmpty() } ?: "en-US" else "en",
             visitorData = visitorData
         )
     )

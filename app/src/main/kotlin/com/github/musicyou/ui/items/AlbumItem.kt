@@ -24,7 +24,8 @@ fun AlbumItem(
         title = album.info?.name ?: "",
         subtitle = if (album.authors.isNullOrEmpty()) album.year
         else "${album.authors?.joinToString(separator = "") { it.name ?: "" }} • ${album.year}",
-        onClick = onClick
+        onClick = onClick,
+        fullCard = true
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             AsyncImage(
@@ -48,7 +49,8 @@ fun LocalAlbumItem(
         title = album.title ?: "",
         subtitle = if (album.authorsText.isNullOrEmpty()) album.year
         else "${album.authorsText} • ${album.year}",
-        onClick = onClick
+        onClick = onClick,
+        fullCard = true
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             AsyncImage(

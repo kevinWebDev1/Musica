@@ -2,6 +2,7 @@ package com.github.musicyou.ui.screens.home
 
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,11 +38,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -68,14 +72,18 @@ import com.github.musicyou.ui.items.LocalSongItem
 import com.github.musicyou.ui.items.PlaylistItem
 import com.github.musicyou.ui.items.SongItem
 import com.github.musicyou.ui.styling.Dimensions
+import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.SnapLayoutInfoProvider
 import com.github.musicyou.utils.asMediaItem
 import com.github.musicyou.utils.forcePlay
 import com.github.musicyou.utils.isLandscape
+import com.github.musicyou.utils.onboardedKey
 import com.github.musicyou.utils.quickPicksSourceKey
 import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.viewmodels.QuickPicksViewModel
 import kotlinx.coroutines.launch
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 
 @ExperimentalFoundationApi
 @ExperimentalAnimationApi
@@ -103,12 +111,45 @@ fun QuickPicks(
         .padding(horizontal = 16.dp)
         .padding(bottom = 8.dp)
 
-    LaunchedEffect(quickPicksSource) {
+    val onboarded by rememberPreference(onboardedKey, defaultValue = false)
+
+    LaunchedEffect(quickPicksSource, onboarded) {
         viewModel.loadQuickPicks(quickPicksSource = quickPicksSource)
+    }
+
+    var currentMediaItem by remember { mutableStateOf(binder?.player?.currentMediaItem) }
+
+    binder?.player?.let { player ->
+        player.DisposableListener {
+            object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    currentMediaItem = mediaItem
+                }
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                         currentMediaItem = player.currentMediaItem
+                    }
+                }
+            }
+        }
     }
 
     HomeScaffold(
         title = R.string.quick_picks,
+        titleContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.app_icon),
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    text = "Musica",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+        },
         openSearch = openSearch,
         openSettings = openSettings
     ) {
@@ -137,20 +178,26 @@ fun QuickPicks(
                     .verticalScroll(rememberScrollState())
                     .padding(top = 4.dp, bottom = 16.dp + playerPadding)
             ) {
-                viewModel.relatedPageResult?.getOrNull()?.let { related ->
-                    Text(
-                        text = stringResource(id = R.string.quick_picks),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = sectionTextModifier
-                    )
-
+                // Determine what songs to show:
+                // 1. If user has listening history (viewModel.trending != null), use relatedPage
+                // 2. If no history but we have trendingSongs from search, show those directly
+                val songsToDisplay = if (viewModel.trending != null) {
+                    viewModel.relatedPageResult?.getOrNull()?.songs
+                } else {
+                    viewModel.trendingSongs
+                }
+                
+                val relatedPageData = viewModel.relatedPageResult?.getOrNull()
+                
+                if (songsToDisplay != null && songsToDisplay.isNotEmpty()) {
                     LazyHorizontalGrid(
                         state = quickPicksLazyGridState,
                         rows = GridCells.Fixed(count = 4),
                         flingBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider),
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height((songThumbnailSizeDp + Dimensions.itemsVerticalPadding * 2) * 4)
+                             .fillMaxWidth()
+                            .height((songThumbnailSizeDp + 16.dp + Dimensions.itemsVerticalPadding * 2) * 4),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
                         viewModel.trending?.let { song ->
                             item {
@@ -159,6 +206,7 @@ fun QuickPicks(
                                         .animateItem()
                                         .width(itemInHorizontalGridWidth),
                                     song = song,
+                                    isPlaying = song.id == currentMediaItem?.mediaId,
                                     onClick = {
                                         val mediaItem = song.asMediaItem
                                         binder?.stopRadio()
@@ -187,8 +235,9 @@ fun QuickPicks(
                         }
 
                         items(
-                            items = related.songs?.dropLast(if (viewModel.trending == null) 0 else 1)
-                                ?: emptyList(),
+                            items = songsToDisplay.let { 
+                                if (viewModel.trending != null) it.dropLast(1) else it 
+                            },
                             key = Innertube.SongItem::key
                         ) { song ->
                             SongItem(
@@ -196,6 +245,7 @@ fun QuickPicks(
                                     .animateItem()
                                     .width(itemInHorizontalGridWidth),
                                 song = song,
+                                isPlaying = song.key == currentMediaItem?.mediaId,
                                 onClick = {
                                     val mediaItem = song.asMediaItem
                                     binder?.stopRadio()
@@ -217,8 +267,9 @@ fun QuickPicks(
                             )
                         }
                     }
+                }
 
-                    related.albums?.let { albums ->
+                    relatedPageData?.albums?.let { albums ->
                         Spacer(modifier = Modifier.height(Dimensions.spacer))
 
                         Text(
@@ -228,7 +279,7 @@ fun QuickPicks(
                         )
 
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 8.dp)
+                            contentPadding = PaddingValues(horizontal = 4.dp)
                         ) {
                             items(
                                 items = albums,
@@ -243,7 +294,7 @@ fun QuickPicks(
                         }
                     }
 
-                    related.artists?.let { artists ->
+                    relatedPageData?.artists?.let { artists ->
                         Spacer(modifier = Modifier.height(Dimensions.spacer))
 
                         Text(
@@ -253,7 +304,7 @@ fun QuickPicks(
                         )
 
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 8.dp)
+                            contentPadding = PaddingValues(horizontal = 4.dp)
                         ) {
                             items(
                                 items = artists,
@@ -268,7 +319,7 @@ fun QuickPicks(
                         }
                     }
 
-                    related.playlists?.let { playlists ->
+                    relatedPageData?.playlists?.let { playlists ->
                         Spacer(modifier = Modifier.height(Dimensions.spacer))
 
                         Text(
@@ -278,7 +329,7 @@ fun QuickPicks(
                         )
 
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 8.dp)
+                            contentPadding = PaddingValues(horizontal = 4.dp)
                         ) {
                             items(
                                 items = playlists,
@@ -294,19 +345,21 @@ fun QuickPicks(
                     }
 
                     Unit
-                } ?: viewModel.relatedPageResult?.exceptionOrNull()?.let {
+                }
+                
+                if (viewModel.relatedPageResult?.exceptionOrNull() != null && viewModel.trendingSongs.isNullOrEmpty()) {
                     Text(
                         text = stringResource(id = R.string.home_error),
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
+                            .fillMaxWidth()
                             .padding(all = 16.dp)
                     )
 
                     Row(
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Button(
@@ -339,7 +392,10 @@ fun QuickPicks(
                             Text(text = stringResource(id = R.string.offline))
                         }
                     }
-                } ?: ShimmerHost {
+                }
+                
+                if (viewModel.relatedPageResult == null && viewModel.trendingSongs.isNullOrEmpty()) {
+                    ShimmerHost {
                     TextPlaceholder(modifier = sectionTextModifier)
 
                     repeat(4) {

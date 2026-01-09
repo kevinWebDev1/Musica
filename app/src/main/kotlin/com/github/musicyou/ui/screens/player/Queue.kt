@@ -71,6 +71,7 @@ import com.github.musicyou.ui.items.ListItemPlaceholder
 import com.github.musicyou.ui.items.MediaSongItem
 import com.github.musicyou.ui.styling.Dimensions
 import com.github.musicyou.ui.styling.onOverlay
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.queueLoopEnabledKey
 import com.github.musicyou.utils.rememberPreference
@@ -138,9 +139,12 @@ fun Queue(
             SnackbarHost(hostState = snackbarHostState)
         }
     ) { paddingValues ->
+        // Get neumorphic colors
+        val neumorphicColors = rememberNeumorphicColors()
+        
         Column(
             modifier = Modifier
-                .background(BottomSheetDefaults.ContainerColor)
+                .background(neumorphicColors.background)
                 .consumeWindowInsets(paddingValues)
         ) {
             LazyColumn(
@@ -277,7 +281,7 @@ fun Queue(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceColorAtElevation(5.dp))
+                    .background(neumorphicColors.background)
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically

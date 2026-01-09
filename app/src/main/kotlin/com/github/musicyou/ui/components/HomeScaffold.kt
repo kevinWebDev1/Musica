@@ -1,9 +1,13 @@
 package com.github.musicyou.ui.components
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -14,15 +18,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.github.musicyou.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScaffold(
     @StringRes title: Int,
+    titleContent: @Composable (() -> Unit)? = null,
     snackbarHost: @Composable (() -> Unit) = {},
     floatingActionButton: @Composable (() -> Unit) = {},
     openSearch: () -> Unit,
@@ -36,7 +44,19 @@ fun HomeScaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(text = stringResource(id = title))
+                    if (titleContent != null) {
+                        titleContent()
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painter = painterResource(id = R.drawable.app_icon),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text(text = stringResource(id = title))
+                        }
+                    }
                 },
                 actions = {
                     TooltipIconButton(

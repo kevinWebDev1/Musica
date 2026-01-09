@@ -1,28 +1,35 @@
 package com.github.musicyou.ui.components
 
-import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.animateDp
-import androidx.compose.animation.core.rememberTransition
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.github.musicyou.ui.styling.neumorphicPressed
+import com.github.musicyou.ui.styling.neumorphicRaised
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import kotlin.math.roundToLong
 
 @Composable
@@ -36,108 +43,91 @@ fun SeekBar(
     color: Color,
     backgroundColor: Color,
     modifier: Modifier = Modifier,
-    barHeight: Dp = 3.dp,
-    scrubberColor: Color = color,
-    scrubberRadius: Dp = 6.dp,
-    shape: Shape = RectangleShape,
+    barHeight: Dp = 10.dp, // Increased default height for deeper effect
+    shape: Shape = CircleShape,
     drawSteps: Boolean = false,
 ) {
-    val isDragging = remember {
-        MutableTransitionState(false)
-    }
-
-    val transition = rememberTransition(transitionState = isDragging, label = null)
-
-    val currentBarHeight by transition.animateDp(label = "") { if (it) scrubberRadius else barHeight }
-    val currentScrubberRadius by transition.animateDp(label = "") { if (it) 0.dp else scrubberRadius }
+    val neumorphicColors = rememberNeumorphicColors()
+    var isDragging by remember { mutableStateOf(false) }
+    var width by remember { mutableStateOf(0f) }
+    val density = LocalDensity.current
 
     Box(
         modifier = modifier
+            .fillMaxWidth()
+            .height(barHeight * 4) // Ample room for interaction and shadows
+            .onSizeChanged { width = it.width.toFloat() }
             .pointerInput(minimumValue, maximumValue) {
-                if (maximumValue < minimumValue) return@pointerInput
+                if (maximumValue <= minimumValue) return@pointerInput
 
                 var acc = 0f
 
                 detectHorizontalDragGestures(
-                    onDragStart = {
-                        isDragging.targetState = true
+                    onDragStart = { offset ->
+                        isDragging = true
+                        val newValue = (offset.x / width * (maximumValue - minimumValue) + minimumValue).roundToLong()
+                        onDragStart(newValue)
                     },
                     onHorizontalDrag = { _, delta ->
-                        acc += delta / size.width * (maximumValue - minimumValue)
-
-                        if (acc !in -1f..1f) {
-                            onDrag(acc.toLong())
-                            acc -= acc.toLong()
+                        if (width > 0) {
+                            acc += delta / width * (maximumValue - minimumValue)
+                            if (java.lang.Math.abs(acc) >= 1f) {
+                                onDrag(acc.toLong())
+                                acc -= acc.toLong()
+                            }
                         }
                     },
                     onDragEnd = {
-                        isDragging.targetState = false
+                        isDragging = false
                         acc = 0f
                         onDragEnd()
                     },
                     onDragCancel = {
-                        isDragging.targetState = false
+                        isDragging = false
                         acc = 0f
                         onDragEnd()
                     }
                 )
             }
             .pointerInput(minimumValue, maximumValue) {
-                if (maximumValue < minimumValue) return@pointerInput
-
+                if (maximumValue <= minimumValue) return@pointerInput
                 detectTapGestures(
-                    onPress = { offset ->
-                        onDragStart((offset.x / size.width * (maximumValue - minimumValue) + minimumValue).roundToLong())
-                    },
-                    onTap = {
+                    onTap = { offset ->
+                        val newValue = (offset.x / width * (maximumValue - minimumValue) + minimumValue).roundToLong()
+                        onDragStart(newValue)
                         onDragEnd()
                     }
                 )
             }
-            .padding(horizontal = scrubberRadius)
-            .drawWithContent {
-                drawContent()
-
-                val scrubberPosition = if (maximumValue < minimumValue) {
-                    0f
-                } else {
-                    (value.toFloat() - minimumValue) / (maximumValue - minimumValue) * size.width
-                }
-
-                drawCircle(
-                    color = scrubberColor,
-                    radius = currentScrubberRadius.toPx(),
-                    center = center.copy(x = scrubberPosition)
-                )
-
-                if (drawSteps) {
-                    for (i in value + 1..maximumValue) {
-                        val stepPosition =
-                            (i.toFloat() - minimumValue) / (maximumValue - minimumValue) * size.width
-                        drawCircle(
-                            color = scrubberColor,
-                            radius = scrubberRadius.toPx() / 2,
-                            center = center.copy(x = stepPosition),
-                        )
-                    }
-                }
-            }
-            .height(scrubberRadius)
     ) {
-        Spacer(
+        val progress = if (maximumValue > minimumValue) {
+            (value.toFloat() - minimumValue) / (maximumValue - minimumValue)
+        } else {
+            0f
+        }
+
+        // Track Background (Sunken "Deep Pressed" look)
+        Box(
             modifier = Modifier
-                .height(currentBarHeight)
                 .fillMaxWidth()
-                .background(color = backgroundColor, shape = shape)
+                .height(barHeight)
                 .align(Alignment.Center)
+                .neumorphicPressed(
+                    cornerRadius = barHeight / 2,
+                    shadowRadius = 8.dp,
+                    spread = 3.dp
+                )
+                .background(neumorphicColors.background, CircleShape)
         )
 
-        Spacer(
+        // Progress Bar (Filled part inside the sunken track)
+        Box(
             modifier = Modifier
-                .height(currentBarHeight)
-                .fillMaxWidth((value.toFloat() - minimumValue) / (maximumValue - minimumValue))
-                .background(color = color, shape = shape)
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .height(barHeight)
                 .align(Alignment.CenterStart)
+                .clip(CircleShape)
+                .background(color)
         )
     }
 }

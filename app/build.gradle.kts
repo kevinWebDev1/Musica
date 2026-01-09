@@ -26,8 +26,8 @@ android {
         applicationId = "com.github.musicyou"
         minSdk = 23
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.0.0"
+        versionCode = 14
+        versionName = "2.0.0"
     }
 
     splits {
@@ -82,9 +82,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    testOptions {
-        unitTests.isReturnDefaultValues = true
-    }
 }
 
 ksp {
@@ -119,9 +116,5 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.firestore)
     
-    testImplementation(libs.junit)
-    testImplementation(libs.truth)
-    testImplementation(libs.kotlin.test)
-    testImplementation(libs.kotlinx.coroutines.test)
     coreLibraryDesugaring(libs.desugaring)
 }

@@ -47,6 +47,8 @@ import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.R
 import com.github.musicyou.ui.styling.Dimensions
 
+import com.github.musicyou.utils.VersionUtils
+
 @ExperimentalAnimationApi
 @Composable
 fun About() {
@@ -110,7 +112,7 @@ fun About() {
             if (newVersionAvailable == null || latestVersion == null) {
                 latestVersion = GitHub.getLastestRelease()?.name
                 latestVersion?.let {
-                    newVersionAvailable = it.removePrefix("v") > currentVersion.removePrefix("v")
+                    newVersionAvailable = VersionUtils.isNewerVersion(it, currentVersion)
                 }
             }
         }
@@ -145,7 +147,7 @@ fun About() {
                     ) {
                         CircularProgressIndicator()
                     }
-                } else if (newVersionAvailable == true) {
+                } else {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -153,13 +155,18 @@ fun About() {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = stringResource(
-                                id = R.string.version,
-                                latestVersion ?: ""
-                            ),
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        if (newVersionAvailable == true) {
+                            Text(
+                                text = "Current version: $currentVersion",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Latest version: ${latestVersion ?: ""}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            Spacer(Modifier.height(8.dp))
 
                             FilledTonalButton(
                                 onClick = {
@@ -175,6 +182,13 @@ fun About() {
 
                                 Text(text = "Download Update")
                             }
+                        } else {
+                            Text(
+                                text = "You are on the latest version ($currentVersion)",
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }

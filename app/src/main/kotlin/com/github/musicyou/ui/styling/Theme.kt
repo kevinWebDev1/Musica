@@ -89,7 +89,7 @@ private val darkScheme = darkColorScheme(
 @Composable
 fun AppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // Disabled to use neumorphic colors
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
