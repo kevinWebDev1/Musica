@@ -39,7 +39,6 @@ An Android application for streaming music from YouTube Music.
     <img src="./screenshots/screenshot_home.jpg" alt="Home" style="width: 30%;">
     <img src="./screenshots/screenshot_artist.jpg" alt="Artist" style="width: 30%;">
     <img src="./screenshots/screenshot_songs.jpg" alt="Songs" style="width: 30%;">
-    <img src="./screenshots/screenshot_artists.jpg" alt="Artists" style="width: 30%;">
     <img src="./screenshots/screenshot_albums.jpg" alt="Albums" style="width: 30%;">
 </div>
 
