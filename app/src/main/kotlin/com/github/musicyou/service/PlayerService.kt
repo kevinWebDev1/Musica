@@ -1424,18 +1424,17 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     }
 
     private fun play() {
-        if (player.playerError != null) player.prepare()
-        
-        // Use SessionManager for playback control
-        if (::sessionManager.isInitialized) {
-             sessionManager.resume()
-             return
+        if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+            android.util.Log.d("MusicSync", "play: Routing through SessionManager")
+            sessionManager.resume()
+        } else {
+            android.util.Log.d("MusicSync", "play: No sync active, direct play")
+            if (player.playbackState == Player.STATE_IDLE) player.prepare()
+            else if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
+            player.play()
         }
-
-        // Fallback or internal logic if needed (though SessionManager should handle it)
-        if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
-        else player.play()
     }
+
 
     private inner class SessionCallback(private val player: Player) : MediaSession.Callback() {
         override fun onPlay() = play()
@@ -1486,14 +1485,39 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     private inner class NotificationActionReceiver(private val player: Player) :
         BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            android.util.Log.d("NotificationAction", "Broadcast received! Action: ${intent.action}")
             when (intent.action) {
                 Action.pause.value -> {
-                     if (::sessionManager.isInitialized) sessionManager.pause()
-                     else player.pause()
+                    android.util.Log.d("NotificationAction", "PAUSE action triggered")
+                    android.util.Log.d("NotificationAction", "Player state before pause: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
+                    
+                    if (::sessionManager.isInitialized) {
+                        android.util.Log.d("NotificationAction", "SessionManager initialized, calling sessionManager.pause()")
+                        sessionManager.pause()
+                    } else {
+                        android.util.Log.d("NotificationAction", "SessionManager NOT initialized, calling player.pause()")
+                        player.pause()
+                    }
+                    
+                    android.util.Log.d("NotificationAction", "Player state after pause: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
                 }
-                Action.play.value -> play()
-                Action.next.value -> player.forceSeekToNext()
-                Action.previous.value -> player.forceSeekToPrevious()
+                Action.play.value -> {
+                    android.util.Log.d("NotificationAction", "PLAY action triggered")
+                    android.util.Log.d("NotificationAction", "Player state before play: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
+                    play()
+                    android.util.Log.d("NotificationAction", "Player state after play: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
+                }
+                Action.next.value -> {
+                    android.util.Log.d("NotificationAction", "NEXT action triggered")
+                    player.forceSeekToNext()
+                }
+                Action.previous.value -> {
+                    android.util.Log.d("NotificationAction", "PREVIOUS action triggered")
+                    player.forceSeekToPrevious()
+                }
+                else -> {
+                    android.util.Log.w("NotificationAction", "Unknown action: ${intent.action}")
+                }
             }
         }
     }
@@ -1510,10 +1534,19 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         val pendingIntent: PendingIntent
             get() = PendingIntent.getBroadcast(
                 this@Context,
-                100,
+                requestCode,
                 Intent(value).setPackage(packageName),
                 PendingIntent.FLAG_UPDATE_CURRENT.or(if (isAtLeastAndroid6) PendingIntent.FLAG_IMMUTABLE else 0)
             )
+
+        private val requestCode: Int
+            get() = when (this.value) {
+                pause.value -> 100
+                play.value -> 101
+                next.value -> 102
+                previous.value -> 103
+                else -> 100
+            }
 
         companion object {
             val pause = Action("com.github.musicyou.pause")

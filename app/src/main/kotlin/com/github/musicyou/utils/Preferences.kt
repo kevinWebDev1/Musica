@@ -41,6 +41,8 @@ const val miniplayerGesturesEnabledKey = "miniplayerGesturesEnabled"
 const val contentRegionKey = "contentRegion"
 const val favoriteGenresKey = "favoriteGenres"
 const val onboardedKey = "onboarded"
+const val lastReviewRemindTimeKey = "lastReviewRemindTime"
+const val hasReviewedKey = "hasReviewed"
 
 inline fun <reified T : Enum<T>> SharedPreferences.getEnum(
     key: String,

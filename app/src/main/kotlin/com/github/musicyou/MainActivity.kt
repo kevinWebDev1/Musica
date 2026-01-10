@@ -56,6 +56,11 @@ import com.github.musicyou.ui.styling.AppTheme
 import com.github.musicyou.utils.asMediaItem
 import com.github.musicyou.utils.forcePlay
 import com.github.musicyou.utils.intent
+import com.github.musicyou.utils.hasReviewedKey
+import com.github.musicyou.utils.lastReviewRemindTimeKey
+import com.github.musicyou.utils.preferences
+import com.github.musicyou.ui.components.ReviewReminderDialog
+import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -162,6 +167,43 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 menuState.content()
                             }
+                        }
+
+                        // Review Reminder Logic
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        var showReviewDialog by remember { mutableStateOf(false) }
+                        
+                        LaunchedEffect(Unit) {
+                            val prefs = context.preferences
+                            val hasReviewed = prefs.getBoolean(hasReviewedKey, false)
+                            val lastRemindTime = prefs.getLong(lastReviewRemindTimeKey, 0L)
+                            val currentTime = System.currentTimeMillis()
+                            
+                            if (!hasReviewed && (currentTime - lastRemindTime) >= 24 * 60 * 60 * 1000) {
+                                showReviewDialog = true
+                            }
+                        }
+
+                        if (showReviewDialog) {
+                            ReviewReminderDialog(
+                                onReview = {
+                                    showReviewDialog = false
+                                    context.preferences.edit { putBoolean(hasReviewedKey, true) }
+                                    try {
+                                        val reviewIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$packageName"))
+                                        reviewIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        startActivity(reviewIntent)
+                                    } catch (e: Exception) {
+                                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$packageName"))
+                                        webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        startActivity(webIntent)
+                                    }
+                                },
+                                onSkip = {
+                                    showReviewDialog = false
+                                    context.preferences.edit { putLong(lastReviewRemindTimeKey, System.currentTimeMillis()) }
+                                }
+                            )
                         }
                     }
                 }

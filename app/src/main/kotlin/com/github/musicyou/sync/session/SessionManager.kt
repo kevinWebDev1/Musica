@@ -655,9 +655,8 @@ class SessionManager(
         
         Log.d(TAG, "pause: Broadcasting PauseEvent")
         
-        if (isHost) {
-            playbackEngine.pause()
-        }
+        // ALWAYS pause locally, regardless of host status
+        playbackEngine.pause()
         
         val state = playbackEngine.playbackState.value
         val now = timeSyncEngine.getGlobalTime()
