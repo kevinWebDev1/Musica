@@ -321,36 +321,15 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         coroutineScope.launch {
             transportManager.incomingMessages.collect { bytes ->
                 try {
-                val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
-                if (event != null) {
-                    android.util.Log.d("PlayerService", "Received Event: $event")
-                    
-                    // DEBUG: Toast EVERY event to verify Host reception
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(applicationContext, "RX: ${event::class.java.simpleName}", android.widget.Toast.LENGTH_SHORT).show()
+                    val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
+                    if (event != null) {
+                        android.util.Log.d("PlayerService", "Received Event: $event")
+                        sessionManager.processEvent(event)
+                    } else {
+                        android.util.Log.w("PlayerService", "Received null event or failed to parse (${bytes.size}b)")
                     }
-
-                    sessionManager.processEvent(event)
-                    
-                    // Show Toast for media events (Play) to confirm sync
-                    if (event is com.github.musicyou.sync.protocol.PlayEvent) {
-                         withContext(Dispatchers.Main) {
-                             android.widget.Toast.makeText(
-                                 applicationContext, 
-                                 "Sync: Playing ${event.mediaId}", 
-                                 android.widget.Toast.LENGTH_SHORT
-                             ).show()
-                         }
-                    }
-                } else {
-                     withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(applicationContext, "RX: Failed to parse (${bytes.size}b)", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
                 } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(applicationContext, "RX: Error ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    android.util.Log.e("PlayerService", "Error processing incoming message", e)
                 }
             }
         }
@@ -362,52 +341,6 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                      // Check if this is a fresh connection event? 
                      // For now, simpler to just log or rely on the UI update.
                  }
-            }
-        }
-        
-        // Session starting is now controlled by SyncDialog with permission checks
-        
-        // Continue with remaining player setup
-        setupPlayerAfterSessionManager()
-    }
-    
-    /**
-     * Reinitialize SessionManager with a new transport layer.
-     * Called when switching between Nearby (local) and WebRTC (internet) transports.
-     */
-    private fun reinitializeSessionManager(newTransport: com.github.musicyou.sync.transport.TransportLayer) {
-        android.util.Log.d("MusicSync", "Reinitializing SessionManager with new transport")
-        
-        // Disconnect old transport
-        coroutineScope.launch {
-            transportManager.disconnect()
-        }
-        
-        // Create new TransportManager with the new transport
-        transportManager = com.github.musicyou.sync.transport.TransportManager(
-            listOf(newTransport)
-        )
-        
-        // Recreate SessionManager with new transport
-        val playbackEngine = sessionManager.playbackEngine
-        val timeSyncEngine = sessionManager.timeSyncEngine
-        
-        sessionManager = com.github.musicyou.sync.session.SessionManager(
-            timeSyncEngine,
-            playbackEngine,
-            transportManager,
-            coroutineScope
-        )
-        
-        // Re-setup event broadcaster
-        sessionManager.setEventBroadcaster { event ->
-            android.util.Log.i("MusicSync", "EVENT BROADCAST: ${event::class.java.simpleName}")
-            val bytes = com.github.musicyou.sync.protocol.SyncEventSerializer.toByteArray(event)
-            android.util.Log.d("MusicSync", "EVENT SERIALIZED: ${bytes.size} bytes")
-            coroutineScope.launch {
-                android.util.Log.d("MusicSync", "EVENT SENDING via transport...")
-                transportManager.send(bytes)
-                android.util.Log.d("MusicSync", "EVENT SENT!")
             }
         }
         
@@ -427,16 +360,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             }
         })
         
-        // Initialize with current media item (only if we're on main thread)
-        // If called from background thread, the listener will update it on next track change
-        try {
-            player.currentMediaItem?.let { mediaItem ->
-                cachedTitle = mediaItem.mediaMetadata.title?.toString()
-                cachedArtist = mediaItem.mediaMetadata.artist?.toString()
-                cachedThumbnailUrl = mediaItem.mediaMetadata.artworkUri?.toString()
-            }
-        } catch (e: IllegalStateException) {
-            android.util.Log.w("MusicSync", "Could not init metadata cache from background thread, will be set on next track change")
+        // Initialize with current media item
+        player.currentMediaItem?.let { mediaItem ->
+            cachedTitle = mediaItem.mediaMetadata.title?.toString()
+            cachedArtist = mediaItem.mediaMetadata.artist?.toString()
+            cachedThumbnailUrl = mediaItem.mediaMetadata.artworkUri?.toString()
         }
         
         // Provider returns cached values (safe to call from any thread)
@@ -460,27 +388,25 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 currentToast?.show()
             }
         }
+
+        // Session starting is now controlled by SyncDialog with permission checks
         
-        // Re-listen for incoming messages
-        coroutineScope.launch {
-            android.util.Log.i("MusicSync", "Starting to collect incoming messages from transport")
-            transportManager.incomingMessages.collect { bytes ->
-                android.util.Log.i("MusicSync", "RECEIVED ${bytes.size} bytes from transport!")
-                try {
-                    val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
-                    if (event != null) {
-                        android.util.Log.i("MusicSync", "RECEIVED EVENT: ${event::class.java.simpleName}")
-                        sessionManager.processEvent(event)
-                    } else {
-                        android.util.Log.w("MusicSync", "Failed to deserialize event - null returned")
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("MusicSync", "Error processing event", e)
-                }
-            }
-        }
+        // Continue with remaining player setup
+        setupPlayerAfterSessionManager()
+    }
+
+    private fun reinitializeSessionManager(newTransport: com.github.musicyou.sync.transport.TransportLayer) {
+        android.util.Log.d("MusicSync", "Updating existing SessionManager with new transport")
         
-        android.util.Log.d("MusicSync", "SessionManager reinitialized successfully")
+        // Stop any active processes first
+        sessionManager.stopSession()
+
+        // Update the existing TransportManager instead of replacing it
+        // This keeps all UI observers (StateFlows) alive and connected!
+        transportManager.resetState()
+        transportManager.updateTransports(listOf(newTransport))
+        
+        android.util.Log.d("MusicSync", "TransportManager updated successfully")
     }
     
     private fun setupPlayerAfterSessionManager() {
@@ -1509,11 +1435,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 }
                 Action.next.value -> {
                     android.util.Log.d("NotificationAction", "NEXT action triggered")
-                    player.forceSeekToNext()
+                    binder.syncSkipNext()
                 }
                 Action.previous.value -> {
                     android.util.Log.d("NotificationAction", "PREVIOUS action triggered")
-                    player.forceSeekToPrevious()
+                    binder.syncSkipPrevious()
                 }
                 else -> {
                     android.util.Log.w("NotificationAction", "Unknown action: ${intent.action}")

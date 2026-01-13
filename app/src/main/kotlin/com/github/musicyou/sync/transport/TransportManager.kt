@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -21,9 +23,11 @@ import kotlinx.coroutines.launch
  * - Connection State is CONNECTED if at least one child is CONNECTED.
  */
 class TransportManager(
-    private val transports: List<TransportLayer>,
+    private var transports: List<TransportLayer>,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default) // IO or Default for flow processing
 ) : TransportLayer {
+
+    private var jobs = mutableListOf<Job>()
 
     private val _connectionState = MutableStateFlow(TransportLayer.ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<TransportLayer.ConnectionState> = _connectionState.asStateFlow()
@@ -38,20 +42,48 @@ class TransportManager(
     override val connectedPeers: StateFlow<List<String>> = _connectedPeers.asStateFlow()
 
     init {
+        setupTransports()
+    }
+    
+    /**
+     * Update the list of underlying transports. 
+     * Resets all internal flows to track the new transports.
+     */
+    fun updateTransports(newTransports: List<TransportLayer>) {
+        // Cancel old jobs
+        jobs.forEach { it.cancel() }
+        jobs.clear()
+        
+        this.transports = newTransports
+        setupTransports()
+    }
+
+    private fun setupTransports() {
         // Aggregate connection states
         transports.forEach { transport ->
-            transport.connectionState.onEach { updateAggregatedState() }.launchIn(scope)
-            transport.sessionId.onEach { updateAggregatedSessionId() }.launchIn(scope)
-            transport.connectedPeers.onEach { updateAggregatedPeers() }.launchIn(scope)
+            jobs.add(transport.connectionState.onEach { updateAggregatedState() }.launchIn(scope))
+            jobs.add(transport.sessionId.onEach { updateAggregatedSessionId() }.launchIn(scope))
+            jobs.add(transport.connectedPeers.onEach { updateAggregatedPeers() }.launchIn(scope))
         }
 
         // Aggregate incoming messages
         val flows = transports.map { it.incomingMessages }
-        merge(*flows.toTypedArray())
-            .onEach { data ->
-                _incomingMessages.emit(data)
-            }
-            .launchIn(scope)
+        jobs.add(
+            merge(*flows.toTypedArray())
+                .onEach { data ->
+                    _incomingMessages.emit(data)
+                }
+                .launchIn(scope)
+        )
+    }
+
+    /**
+     * Reset the internal state of the manager (e.g. before joining a new session).
+     */
+    fun resetState() {
+        _sessionId.value = null
+        _connectedPeers.value = emptyList()
+        _connectionState.value = TransportLayer.ConnectionState.DISCONNECTED
     }
 
     private fun updateAggregatedSessionId() {

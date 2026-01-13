@@ -328,11 +328,11 @@ fun Player(
                 onDismiss = { isShowingSyncDialog = false },
                 onStartSession = { isLongDistance ->
                     binder.startSyncSession(isLongDistance)
-                    isShowingSyncDialog = false
+                    // Keep dialog open to see sync status
                 },
                 onJoinSession = { code, isLongDistance ->
                     binder.joinSyncSession(code, isLongDistance)
-                    isShowingSyncDialog = false
+                    // Keep dialog open to see sync status
                 }
             )
         }

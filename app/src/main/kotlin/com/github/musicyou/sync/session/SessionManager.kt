@@ -32,7 +32,7 @@ class SessionManager(
         private const val TAG = "MusicSync"
         private const val HEARTBEAT_INTERVAL_MS = 5_000L  // Send heartbeat every 5 seconds to keep connection alive
         private const val SYNC_ECHO_SUPPRESS_MS = 3000L   // Suppress echo for 3 seconds after sync
-        private const val SYNC_LEAD_TIME_MS = 4000L       // Schedule playback start 4s in future for sync
+        private const val SYNC_LEAD_TIME_MS = 0L          // No delay - Host starts instantly
         private const val DEBOUNCE_MS = 500L              // Ignore rapid button presses within 500ms
         
         // FIX 2: Extended snapshot lock duration to cover async ExoPlayer callbacks
@@ -116,7 +116,10 @@ class SessionManager(
         // Sync transport layer's sessionId and connectedPeers to sessionState
         transportLayer.sessionId.onEach { sessionId ->
             Log.d(TAG, "init: sessionId changed to: $sessionId")
-            _sessionState.value = _sessionState.value.copy(sessionId = sessionId)
+            _sessionState.value = _sessionState.value.copy(
+                sessionId = sessionId,
+                isHandshaking = sessionId == null && _sessionState.value.isHandshaking // Clear if ID arrives
+            )
             
             // STRICT RULE: If Host disconnects (sessionId null), Participant must stop playback.
             if (sessionId == null && !isHost) {
@@ -205,19 +208,17 @@ class SessionManager(
             
             // PARTICIPANT: When connecting to host, send join announcement and request state
             if (!isHost && peers.isNotEmpty() && previousPeerCount == 0) {
-                val myName = getCurrentUserName()
-                Log.i(TAG, "init: Participant detected connection, sending JoinEvent and RequestStateEvent (name=$myName)")
-                
                 // Send JoinEvent to announce our name
-                myName?.let {
-                    val joinEvent = JoinEvent(name = it, timestamp = timeSyncEngine.getGlobalTime())
-                    eventBroadcaster?.invoke(joinEvent)
-                }
+                val userName = getCurrentUserName()
+                val finalName = userName ?: android.os.Build.MODEL
+                Log.i(TAG, "init: Participant sending JoinEvent (name=$finalName)")
+                val joinEvent = JoinEvent(name = finalName, timestamp = timeSyncEngine.getGlobalTime())
+                eventBroadcaster?.invoke(joinEvent)
                 
                 // Request the current state
                 val requestEvent = RequestStateEvent(
                     timestamp = timeSyncEngine.getGlobalTime(),
-                    senderName = myName
+                    senderName = finalName
                 )
                 eventBroadcaster?.invoke(requestEvent)
             }
@@ -499,6 +500,7 @@ class SessionManager(
 
         _sessionState.value = SessionState(
             isHost = true,
+            isHandshaking = true, // Start transition immediately
             currentMediaId = engine.mediaId,
             playbackStatus = if (engine.isPlaying) SessionState.Status.PLAYING else SessionState.Status.PAUSED,
             trackStartGlobalTime = now - engine.currentPositionMs,
@@ -506,7 +508,7 @@ class SessionManager(
             playbackSpeed = engine.playbackSpeed,
             // UX: Host starts in WAITING status
             syncStatus = SessionState.SyncStatus.WAITING,
-            clockSyncMessage = "Waiting for participants to join..."
+            clockSyncMessage = "Starting session..."
         )
         Log.d(TAG, "startSession: SessionState set - ${_sessionState.value}")
 
@@ -520,7 +522,11 @@ class SessionManager(
         Log.i(TAG, "joinSession: Joining as PARTICIPANT with code=$code")
         isHost = false
         // Also set the StateFlow to keep in sync
-        _sessionState.value = _sessionState.value.copy(isHost = false)
+        _sessionState.value = _sessionState.value.copy(
+            isHost = false,
+            isHandshaking = true,
+            clockSyncMessage = "Connecting to $code..."
+        )
         scope.launch { transportLayer.connect(code) }
         
         // Start heartbeat to keep connection alive
@@ -858,6 +864,7 @@ class SessionManager(
         // EXC EPT if Host-Only Mode is active - then ignore request events from participants
         if (isHost && _sessionState.value.hostOnlyMode && event !is RequestStateEvent && event !is PingEvent) {
             Log.d(TAG, "processEvent: Host ignoring participant request event due to Host-Only Mode: ${event::class.simpleName}")
+            broadcastAuthoritativeState()
             return
         }
 
@@ -873,10 +880,14 @@ class SessionManager(
                 // Track sender's name if provided
                 event.senderName?.let { name ->
                     val updatedNames = _sessionState.value.connectedPeerNames.toMutableMap()
-                    // Use "participant" as a generic key since we don't have peer ID here
-                    updatedNames["latest_participant"] = name
+                    // Use a unique-ish key to prevent overwriting other participants
+                    val key = "participant_${name.hashCode()}_${System.currentTimeMillis()}"
+                    updatedNames[key] = name
                     _sessionState.value = _sessionState.value.copy(connectedPeerNames = updatedNames)
-                    Log.i(TAG, "processEvent: Tracked participant name: $name")
+                    Log.i(TAG, "processEvent: Tracked participant name: $name with key $key")
+                    
+                    // BROADCAST updated name list to ALL participants
+                    broadcastAuthoritativeState()
                 }
 
                 val state = _sessionState.value
@@ -895,6 +906,11 @@ class SessionManager(
                 
                 // Show toast that someone joined
                 toastHandler?.invoke("${event.name} joined the session")
+                
+                // BROADCAST updated name list to all participants
+                if (isHost) {
+                    broadcastAuthoritativeState()
+                }
             }
 
             is StateSyncEvent -> {

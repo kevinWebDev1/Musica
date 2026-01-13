@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -164,15 +166,22 @@ fun SyncDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.sync_session)) },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                if (sessionState.sessionId != null) {
-                    // Active Session
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (sessionState.sessionId != null || sessionState.isHandshaking) {
+                    // Active Session OR Handshaking (Starting/Joining)
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = stringResource(R.string.session_id_label, sessionState.sessionId!!),
+                            text = if (sessionState.sessionId != null) 
+                                stringResource(R.string.session_id_label, sessionState.sessionId!!)
+                            else 
+                                "Session ID: Generating...",
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.weight(1f)
                         )

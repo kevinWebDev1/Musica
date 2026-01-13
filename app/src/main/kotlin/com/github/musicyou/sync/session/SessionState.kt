@@ -41,6 +41,8 @@ data class SessionState(
     // Sync status for UX feedback
     val syncStatus: SyncStatus = SyncStatus.WAITING,
     
+    val isHandshaking: Boolean = false,
+    
     // Clock sync status message
     val clockSyncMessage: String? = null
 ) {
