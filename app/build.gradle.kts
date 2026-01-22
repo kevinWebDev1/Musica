@@ -28,6 +28,7 @@ android {
         targetSdk = 36
         versionCode = 16
         versionName = "2.2"
+        resConfigs("en")
     }
 
     splits {
