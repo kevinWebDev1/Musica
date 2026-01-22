@@ -87,42 +87,57 @@ class ExoPlayerPlaybackEngine(
     override fun loadTrack(mediaId: String, seekPositionMs: Long, autoPlay: Boolean) {
         android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Resolving and Loading $mediaId, seekTo=$seekPositionMs, autoPlay=$autoPlay")
         
-        // Launch a coroutine to fetch metadata
+        // Launch a coroutine to fetch metadata with PHASE 2 timeout wrapper
         scope.launch {
-            var mediaItem: MediaItem? = null
-            
-            // Try database first (local cache)
-            val dbSong = Database.song(mediaId).firstOrNull()
-            if (dbSong != null) {
-                android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using DB song - ${dbSong.title}")
-                mediaItem = dbSong.asMediaItem
-            } else {
-                // Fallback to Innertube API
-                try {
-                    val result = Innertube.song(mediaId)
-                    val songItem = result?.getOrNull()
-                    if (songItem != null) {
-                        android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using Innertube - ${songItem.info?.name}")
-                        mediaItem = songItem.asMediaItem
+            // PHASE 2: Wrap entire resolution in 10s timeout to prevent infinite buffering
+            val loadResult = kotlinx.coroutines.withTimeoutOrNull(10_000) {  // 10s timeout
+                var mediaItem: MediaItem? = null
+                
+                // Try database first (local cache)
+                val dbSong = Database.song(mediaId).firstOrNull()
+                if (dbSong != null) {
+                    android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using DB song - ${dbSong.title}")
+                    mediaItem = dbSong.asMediaItem
+                } else {
+                    // Fallback to Innertube API
+                    try {
+                        val result = Innertube.song(mediaId)
+                        val songItem = result?.getOrNull()
+                        if (songItem != null) {
+                            android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using Innertube - ${songItem.info?.name}")
+                            mediaItem = songItem.asMediaItem
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Innertube failed: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Innertube failed: ${e.message}")
                 }
+                
+                // Final fallback - basic MediaItem with just ID
+                if (mediaItem == null) {
+                    android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Using basic MediaItem (no metadata)")
+                    mediaItem = MediaItem.Builder()
+                        .setUri(mediaId)
+                        .setMediaId(mediaId)
+                        .setCustomCacheKey(mediaId)
+                        .build()
+                }
+                
+                mediaItem  // Return resolved MediaItem
             }
             
-            // Final fallback - basic MediaItem with just ID
-            if (mediaItem == null) {
-                android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Using basic MediaItem (no metadata)")
-                mediaItem = MediaItem.Builder()
-                    .setUri(mediaId)
-                    .setMediaId(mediaId)
-                    .setCustomCacheKey(mediaId)
-                    .build()
+            // PHASE 2: Handle timeout case
+            if (loadResult == null) {
+                android.util.Log.e("ExoPPlaybackEngine", "loadTrack: TIMEOUT after 10s for $mediaId")
+                // Emit error state to notify playback engine consumers
+                _playbackState.update {
+                    it.copy(playbackState = PlaybackState.STATE_ERROR)
+                }
+                return@launch
             }
             
             // Apply on main thread - seek and play AFTER track is set
             runOnMain {
-                player.setMediaItem(mediaItem!!)
+                player.setMediaItem(loadResult)
                 player.prepare()
                 if (seekPositionMs > 0) {
                     android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Seeking to $seekPositionMs ms")

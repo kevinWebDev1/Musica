@@ -1,6 +1,7 @@
 package com.github.musicyou.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,7 +40,8 @@ fun ReviewReminderDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(24.dp)
-                .neumorphicSurface(cornerRadius = 28.dp)
+                .background(colors.background, RoundedCornerShape(28.dp))
+                .border(1.dp, colors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(28.dp))
                 .padding(24.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -94,7 +96,8 @@ fun ReviewReminderDialog(
                         modifier = Modifier
                             .weight(1f)
                             .height(50.dp)
-                            .neumorphicSurface(cornerRadius = 12.dp)
+                            .background(colors.background, RoundedCornerShape(12.dp))
+                            .border(1.dp, colors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
                             .clickable(onClick = onSkip),
                         contentAlignment = Alignment.Center
                     ) {
@@ -110,7 +113,8 @@ fun ReviewReminderDialog(
                         modifier = Modifier
                             .weight(1f)
                             .height(50.dp)
-                            .neumorphicSurface(cornerRadius = 12.dp)
+                            .background(colors.background, RoundedCornerShape(12.dp))
+                            .border(1.dp, colors.onBackground.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
                             .clickable(onClick = onReview),
                         contentAlignment = Alignment.Center
                     ) {

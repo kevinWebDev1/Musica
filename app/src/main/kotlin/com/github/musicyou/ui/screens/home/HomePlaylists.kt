@@ -40,12 +40,15 @@ import com.github.musicyou.utils.playlistSortByKey
 import com.github.musicyou.utils.playlistSortOrderKey
 import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.viewmodels.HomePlaylistsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @ExperimentalAnimationApi
 @ExperimentalFoundationApi
 @Composable
 fun HomePlaylists(
     openSearch: () -> Unit,
+    openProfile: () -> Unit,
     openSettings: () -> Unit,
     onBuiltInPlaylist: (Int) -> Unit,
     onPlaylistClick: (Playlist) -> Unit
@@ -57,6 +60,7 @@ fun HomePlaylists(
     var sortOrder by rememberPreference(playlistSortOrderKey, SortOrder.Ascending)
 
     val viewModel: HomePlaylistsViewModel = viewModel()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(sortBy, sortOrder) {
         viewModel.loadArtists(
@@ -74,7 +78,10 @@ fun HomePlaylists(
             },
             onDone = { text ->
                 query {
-                    Database.insert(Playlist(name = text))
+                    val id = Database.insert(Playlist(name = text))
+                    scope.launch {
+                        com.github.musicyou.auth.SyncManager.backupSinglePlaylist(id)
+                    }
                 }
             }
         )
@@ -83,6 +90,7 @@ fun HomePlaylists(
     HomeScaffold(
         title = R.string.playlists,
         openSearch = openSearch,
+        openProfile = openProfile,
         openSettings = openSettings
     ) {
         LazyVerticalGrid(

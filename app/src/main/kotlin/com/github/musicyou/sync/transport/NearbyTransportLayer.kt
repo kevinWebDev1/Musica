@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,8 +32,7 @@ import kotlinx.coroutines.launch
  */
 class NearbyTransportLayer(
     private val context: Context,
-    private val serviceId: String = "com.github.musicyou.sync", // Must match manifest
-    private val isHost: Boolean
+    private val serviceId: String = "com.github.musicyou.sync" // Must match manifest
 ) : TransportLayer {
 
     private val connectionsClient = Nearby.getConnectionsClient(context)
@@ -41,8 +41,8 @@ class NearbyTransportLayer(
     override val connectionState: StateFlow<TransportLayer.ConnectionState> = _connectionState.asStateFlow()
 
     // Buffer of 64 to prevent message drops
-    private val _incomingMessages = MutableSharedFlow<ByteArray>(replay = 1, extraBufferCapacity = 64)
-    override val incomingMessages: SharedFlow<ByteArray> = _incomingMessages.asSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<TransportLayer.TransportMessage>(replay = 1, extraBufferCapacity = 64)
+    override val incomingMessages: SharedFlow<TransportLayer.TransportMessage> = _incomingMessages.asSharedFlow()
     
     private val scope = CoroutineScope(Dispatchers.IO)
 
@@ -55,9 +55,9 @@ class NearbyTransportLayer(
             android.util.Log.d(TAG, "onPayloadReceived: endpoint=$endpointId type=${payload.type}")
             if (payload.type == Payload.Type.BYTES) {
                 payload.asBytes()?.let { bytes ->
-                    android.util.Log.i(TAG, "onPayloadReceived: Received ${bytes.size} bytes, emitting to flow")
+                    android.util.Log.i(TAG, "onPayloadReceived: Received ${bytes.size} bytes from $endpointId, emitting to flow")
                     scope.launch {
-                        _incomingMessages.emit(bytes)
+                        _incomingMessages.emit(TransportLayer.TransportMessage(endpointId, bytes))
                         android.util.Log.d(TAG, "onPayloadReceived: Emitted to incomingMessages flow")
                     }
                 } ?: run {
@@ -86,10 +86,9 @@ class NearbyTransportLayer(
             when (result.status.statusCode) {
                 ConnectionsStatusCodes.STATUS_OK -> {
                     connectedEndpointIds.add(endpointId)
-                    _connectedPeers.value = connectedEndpointIds.toList()
+                    _connectedPeers.update { connectedEndpointIds.toList() }
                     android.util.Log.i(TAG, "Connected to: $endpointId. Total peers: ${connectedEndpointIds.size}")
                     
-                    // We are connected if we have at least one peer? Or just state transition.
                     _connectionState.value = TransportLayer.ConnectionState.CONNECTED
                 }
                 else -> {
@@ -104,7 +103,7 @@ class NearbyTransportLayer(
         override fun onDisconnected(endpointId: String) {
             android.util.Log.d(TAG, "onDisconnected: endpoint=$endpointId")
             connectedEndpointIds.remove(endpointId)
-            _connectedPeers.value = connectedEndpointIds.toList()
+            _connectedPeers.update { connectedEndpointIds.toList() }
             
             if (connectedEndpointIds.isEmpty()) {
                 _connectionState.value = TransportLayer.ConnectionState.DISCONNECTED
@@ -222,7 +221,7 @@ class NearbyTransportLayer(
         connectionsClient.stopDiscovery()
         connectionsClient.stopAllEndpoints()
         connectedEndpointIds.clear()
-        _connectedPeers.value = emptyList()
+        _connectedPeers.update { emptyList() }
         _sessionId.value = null
         _connectionState.value = TransportLayer.ConnectionState.DISCONNECTED
     }

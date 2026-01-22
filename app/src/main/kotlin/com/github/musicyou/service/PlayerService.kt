@@ -93,10 +93,12 @@ import com.github.musicyou.utils.isAtLeastAndroid13
 import com.github.musicyou.utils.isAtLeastAndroid6
 import com.github.musicyou.utils.isAtLeastAndroid8
 import com.github.musicyou.utils.isInvincibilityEnabledKey
+import com.github.musicyou.auth.ProfileManager
 import com.github.musicyou.utils.isShowingThumbnailInLockscreenKey
 import com.github.musicyou.utils.mediaItems
 import com.github.musicyou.utils.persistentQueueKey
 import com.github.musicyou.utils.preferences
+import kotlinx.coroutines.launch
 import com.github.musicyou.utils.queueLoopEnabledKey
 import com.github.musicyou.utils.resumePlaybackWhenDeviceConnectedKey
 import com.github.musicyou.utils.shouldBePlaying
@@ -135,6 +137,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import kotlin.system.exitProcess
 import android.os.Binder as AndroidBinder
+import com.github.musicyou.sync.presence.PresenceManager
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListener.Callback,
@@ -182,6 +185,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     private var isPersistentQueueEnabled = false
     private var isShowingThumbnailInLockscreen = true
     private lateinit var transportManager: com.github.musicyou.sync.transport.TransportManager
+    private lateinit var authManager: com.github.musicyou.auth.AuthManager
     override var isInvincibilityEnabled = false
 
     private var audioManager: AudioManager? = null
@@ -224,6 +228,9 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     override fun onCreate() {
         super.onCreate()
+        
+        // Initialize PresenceManager with app context for privacy settings
+        PresenceManager.initialize(applicationContext)
 
         bitmapProvider = BitmapProvider(
             context = applicationContext,
@@ -267,12 +274,15 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         }
         cache = SimpleCache(directory, cacheEvictor, StandaloneDatabaseProvider(this))
 
+        // Initialize Auth
+        authManager = com.github.musicyou.auth.AuthManager(this)
+
         // Initialize Sync Components
         val timeSyncEngine = com.github.musicyou.sync.time.TimeSyncEngine()
         
         // Initialize Transports
         // Initialize Transports
-        val nearbyTransport = com.github.musicyou.sync.transport.NearbyTransportLayer(this, isHost = true) // Default to Host for now? Or need a toggle.
+        val nearbyTransport = com.github.musicyou.sync.transport.NearbyTransportLayer(this)
         
         // Disable WebRTC and WebSocket for now to prevent native crashes (SIGSEGV in libjingle)
         // val webRtcTransport = com.github.musicyou.sync.transport.WebRtcTransportLayer(this, object : com.github.musicyou.sync.transport.SignalingClient { ... })
@@ -319,14 +329,14 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         
         // Listen for incoming messages from Transport
         coroutineScope.launch {
-            transportManager.incomingMessages.collect { bytes ->
+            transportManager.incomingMessages.collect { message ->
                 try {
-                    val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(bytes)
+                    val event = com.github.musicyou.sync.protocol.SyncEventSerializer.fromByteArray(message.data)
                     if (event != null) {
-                        android.util.Log.d("PlayerService", "Received Event: $event")
-                        sessionManager.processEvent(event)
+                        android.util.Log.d("PlayerService", "Received Event from ${message.senderId}: $event")
+                        sessionManager.processEvent(event, message.senderId)
                     } else {
-                        android.util.Log.w("PlayerService", "Received null event or failed to parse (${bytes.size}b)")
+                        android.util.Log.w("PlayerService", "Received null event or failed to parse (${message.data.size}b) from ${message.senderId}")
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("PlayerService", "Error processing incoming message", e)
@@ -357,6 +367,42 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 cachedArtist = mediaItem?.mediaMetadata?.artist?.toString()
                 cachedThumbnailUrl = mediaItem?.mediaMetadata?.artworkUri?.toString()
                 android.util.Log.d("MusicSync", "Cached metadata updated: title=$cachedTitle, artist=$cachedArtist")
+                
+                // Update RTDB presence with current song
+                if (mediaItem != null && cachedTitle != null && cachedArtist != null) {
+                    PresenceManager.updateCurrentSong(
+                        songId = mediaItem.mediaId,
+                        title = cachedTitle,
+                        artist = cachedArtist,
+                        albumArt = cachedThumbnailUrl
+                    )
+                    android.util.Log.d("PresenceIntegration", "Updated current song: $cachedTitle - $cachedArtist")
+                } else {
+                    PresenceManager.clearCurrentSong()
+                    android.util.Log.d("PresenceIntegration", "Cleared current song")
+                }
+            }
+            
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) {
+                    // Only clear if actually paused/stopped, NOT buffering
+                    if (player.playbackState != androidx.media3.common.Player.STATE_BUFFERING) {
+                         // Clear current song when playback stops
+                        PresenceManager.clearCurrentSong()
+                        android.util.Log.d("PresenceIntegration", "Playback stopped, cleared current song")
+                    }
+                } else {
+                    // Resume/Start playing - restore presence
+                    if (cachedTitle != null && cachedArtist != null) {
+                         PresenceManager.updateCurrentSong(
+                            songId = player.currentMediaItem?.mediaId ?: "unknown",
+                            title = cachedTitle,
+                            artist = cachedArtist,
+                            albumArt = cachedThumbnailUrl
+                        )
+                        android.util.Log.d("PresenceIntegration", "Playback resumed, restored current song: $cachedTitle")
+                    }
+                }
             }
         })
         
@@ -374,7 +420,17 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         
         // Setup name provider to include user name in sync events
         sessionManager.setNameProvider {
-            com.github.musicyou.sync.SyncPreferences.getUserName(this@PlayerService)
+            val username = preferences.getString(com.github.musicyou.utils.usernameKey, null)
+            if (username != null) return@setNameProvider "@$username"
+            preferences.getString(com.github.musicyou.utils.displayNameKey, null)
+                ?: authManager.currentUser.value?.displayName 
+                ?: com.github.musicyou.sync.SyncPreferences.getUserName(this@PlayerService)
+        }
+        
+        // Setup avatar provider to include profile picture in sync events
+        sessionManager.setAvatarProvider {
+            preferences.getString(com.github.musicyou.utils.profileImageUrlKey, null)
+                ?: authManager.currentUser.value?.photoUrl?.toString()
         }
         
         // Setup toast handler to show notifications when participants request changes
@@ -393,6 +449,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         
         // Continue with remaining player setup
         setupPlayerAfterSessionManager()
+        
+        // Set presence to online when service starts
+        coroutineScope.launch {
+            ProfileManager.updatePresence("idle", null)
+        }
     }
 
     private fun reinitializeSessionManager(newTransport: com.github.musicyou.sync.transport.TransportLayer) {
@@ -485,6 +546,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         cache.release()
 
         loudnessEnhancer?.release()
+        
+        // Set presence to offline when service stops
+        coroutineScope.launch {
+            ProfileManager.updatePresence("offline", null)
+        }
 
         super.onDestroy()
     }
@@ -526,6 +592,9 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                         )
                     )
                 } catch (_: SQLException) {
+                }
+                coroutineScope.launch {
+                    com.github.musicyou.auth.SyncManager.backupHistory()
                 }
             }
         }
@@ -1289,8 +1358,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 } else {
                     android.util.Log.d("MusicSync", "Creating Nearby transport for local sync")
                     com.github.musicyou.sync.transport.NearbyTransportLayer(
-                        this@PlayerService,
-                        isHost = true
+                        this@PlayerService
                     )
                 }
                 
@@ -1324,8 +1392,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 } else {
                     android.util.Log.d("MusicSync", "Creating Nearby transport for local sync join")
                     com.github.musicyou.sync.transport.NearbyTransportLayer(
-                        this@PlayerService,
-                        isHost = false
+                        this@PlayerService
                     )
                 }
                 

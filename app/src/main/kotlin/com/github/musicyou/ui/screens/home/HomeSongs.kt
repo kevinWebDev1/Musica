@@ -82,6 +82,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeSongs(
     openSearch: () -> Unit,
+    openProfile: () -> Unit,
     openSettings: () -> Unit,
     onGoToAlbum: (String) -> Unit,
     onGoToArtist: (String) -> Unit
@@ -151,6 +152,7 @@ fun HomeSongs(
             }
         },
         openSearch = openSearch,
+        openProfile = openProfile,
         openSettings = openSettings
     ) {
         LazyVerticalGrid(

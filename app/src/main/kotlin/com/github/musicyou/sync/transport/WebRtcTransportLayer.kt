@@ -45,8 +45,8 @@ class WebRtcTransportLayer(
     private val _connectionState = MutableStateFlow(TransportLayer.ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<TransportLayer.ConnectionState> = _connectionState.asStateFlow()
 
-    private val _incomingMessages = MutableSharedFlow<ByteArray>(replay = 1, extraBufferCapacity = 64)
-    override val incomingMessages: SharedFlow<ByteArray> = _incomingMessages.asSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<TransportLayer.TransportMessage>(replay = 1, extraBufferCapacity = 64)
+    override val incomingMessages: SharedFlow<TransportLayer.TransportMessage> = _incomingMessages.asSharedFlow()
 
     private val _sessionId = MutableStateFlow<String?>(null)
     override val sessionId: StateFlow<String?> = _sessionId.asStateFlow()
@@ -426,9 +426,9 @@ class WebRtcTransportLayer(
                 buffer?.let {
                     val data = ByteArray(it.data.remaining())
                     it.data.get(data)
-                    Log.d(TAG, "WebRTC: Received ${data.size} bytes")
+                    Log.d(TAG, "WebRTC: Received ${data.size} bytes from peer")
                     scope.launch {
-                        _incomingMessages.emit(data)
+                        _incomingMessages.emit(TransportLayer.TransportMessage("webrtc-peer", data))
                     }
                 }
             }

@@ -12,7 +12,20 @@
           "package_name": "com.github.musicyou"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "98221868348-r2qnescsc6httaa1cfm9mshhsba15rot.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.github.musicyou",
+            "certificate_hash": "7be1740168f27570be44a12d32d0001712ed4a3e"
+          }
+        },
+        {
+          "client_id": "98221868348-o6g1revbm6l9jsuj62ef7c47gjos0tnv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDrfmaZCmmWpQwQecNeIIePZO2FNxg6Aus"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "98221868348-o6g1revbm6l9jsuj62ef7c47gjos0tnv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     },
@@ -31,7 +49,20 @@
           "package_name": "com.github.musicyou.debug"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "98221868348-2cjo5toip69la5fdm4eqiuh6mm98mdup.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.github.musicyou.debug",
+            "certificate_hash": "7be1740168f27570be44a12d32d0001712ed4a3e"
+          }
+        },
+        {
+          "client_id": "98221868348-o6g1revbm6l9jsuj62ef7c47gjos0tnv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDrfmaZCmmWpQwQecNeIIePZO2FNxg6Aus"
@@ -39,7 +70,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "98221868348-o6g1revbm6l9jsuj62ef7c47gjos0tnv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -43,6 +44,7 @@ import com.github.musicyou.utils.asMediaItem
 import com.github.musicyou.utils.completed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
@@ -56,6 +58,7 @@ fun LocalPlaylistScreen(
     onGoToAlbum: (String) -> Unit,
     onGoToArtist: (String) -> Unit
 ) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var playlist: Playlist? by remember { mutableStateOf(null) }
 
     var isRenaming by rememberSaveable { mutableStateOf(false) }
@@ -86,6 +89,7 @@ fun LocalPlaylistScreen(
                     }
                 },
                 actions = {
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     if (!playlist?.browseId.isNullOrEmpty()) {
                         TooltipIconButton(
                             description = R.string.sync_playlist,
@@ -113,12 +117,32 @@ fun LocalPlaylistScreen(
                                                 }?.let(Database::insertSongPlaylistMaps)
                                         }
                                     }
+                                    scope.launch {
+                                        com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
+                                    }
                                 }
                             },
                             icon = Icons.Outlined.Sync,
                             inTopBar = true
                         )
                     }
+
+                    TooltipIconButton(
+                        description = R.string.share,
+                        onClick = {
+                            val url = playlist?.browseId?.let { "https://music.youtube.com/playlist?list=${it}" }
+                                ?: com.github.musicyou.auth.SyncManager.createShareLink(playlistId)
+                            
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_TEXT, url)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(sendIntent, null))
+                        },
+                        icon = Icons.Outlined.Share,
+                        inTopBar = true
+                    )
 
                     TooltipIconButton(
                         description = R.string.rename_playlist,
@@ -159,6 +183,9 @@ fun LocalPlaylistScreen(
                         query {
                             playlist?.copy(name = text)
                                 ?.let(Database::update)
+                            scope.launch {
+                                com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
+                            }
                         }
                     }
                 )
@@ -171,6 +198,9 @@ fun LocalPlaylistScreen(
                     onConfirm = {
                         query {
                             playlist?.let(Database::delete)
+                            scope.launch {
+                                com.github.musicyou.auth.SyncManager.deletePlaylistBackup(playlistId)
+                            }
                         }
                         pop()
                     }

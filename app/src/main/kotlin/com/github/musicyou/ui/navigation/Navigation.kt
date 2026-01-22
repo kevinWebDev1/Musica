@@ -34,6 +34,7 @@ import com.github.musicyou.ui.screens.search.SearchScreen
 import com.github.musicyou.ui.screens.settings.SettingsPage
 import com.github.musicyou.ui.screens.settings.SettingsScreen
 import com.github.musicyou.ui.screens.onboarding.OnboardingScreen
+import com.github.musicyou.ui.screens.profile.ProfileScreen
 import com.github.musicyou.utils.homeScreenTabIndexKey
 import com.github.musicyou.utils.onboardedKey
 import com.github.musicyou.utils.rememberPreference
@@ -132,13 +133,15 @@ fun Navigation(
                 },
                 onOfflinePlaylistClick = {
                     navController.navigate(route = Routes.BuiltInPlaylist(index = 1))
-                }
+                },
+                openProfile = { navController.navigate(route = Routes.Profile) }
             )
         }
 
         playerComposable(route = Routes.Songs::class) {
             HomeSongs(
                 openSearch = { navController.navigate(route = Routes.Search) },
+                openProfile = { navController.navigate(route = Routes.Profile) },
                 openSettings = { navController.navigate(route = Routes.Settings) },
                 onGoToAlbum = navigateToAlbum,
                 onGoToArtist = navigateToArtist
@@ -148,6 +151,7 @@ fun Navigation(
         playerComposable(route = Routes.Artists::class) {
             HomeArtistList(
                 openSearch = { navController.navigate(route = Routes.Search) },
+                openProfile = { navController.navigate(route = Routes.Profile) },
                 openSettings = { navController.navigate(route = Routes.Settings) },
                 onArtistClick = { artist -> navigateToArtist(artist.id) }
             )
@@ -156,6 +160,7 @@ fun Navigation(
         playerComposable(route = Routes.Albums::class) {
             HomeAlbums(
                 openSearch = { navController.navigate(route = Routes.Search) },
+                openProfile = { navController.navigate(route = Routes.Profile) },
                 openSettings = { navController.navigate(route = Routes.Settings) },
                 onAlbumClick = { album -> navigateToAlbum(album.id) }
             )
@@ -164,6 +169,7 @@ fun Navigation(
         playerComposable(route = Routes.Playlists::class) {
             HomePlaylists(
                 openSearch = { navController.navigate(route = Routes.Search) },
+                openProfile = { navController.navigate(route = Routes.Profile) },
                 openSettings = { navController.navigate(route = Routes.Settings) },
                 onBuiltInPlaylist = { playlistIndex ->
                     navController.navigate(route = Routes.BuiltInPlaylist(index = playlistIndex))
@@ -268,6 +274,12 @@ fun Navigation(
                         popUpTo(Routes.Onboarding) { inclusive = true }
                     }
                 }
+            )
+        }
+
+        playerComposable(route = Routes.Profile::class) {
+            ProfileScreen(
+                pop = popDestination
             )
         }
     }

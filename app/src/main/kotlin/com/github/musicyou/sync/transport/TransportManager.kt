@@ -32,8 +32,8 @@ class TransportManager(
     private val _connectionState = MutableStateFlow(TransportLayer.ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<TransportLayer.ConnectionState> = _connectionState.asStateFlow()
 
-    private val _incomingMessages = MutableSharedFlow<ByteArray>()
-    override val incomingMessages: SharedFlow<ByteArray> = _incomingMessages.asSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<TransportLayer.TransportMessage>()
+    override val incomingMessages: SharedFlow<TransportLayer.TransportMessage> = _incomingMessages.asSharedFlow()
 
     private val _sessionId = MutableStateFlow<String?>(null)
     override val sessionId: StateFlow<String?> = _sessionId.asStateFlow()
@@ -70,8 +70,8 @@ class TransportManager(
         val flows = transports.map { it.incomingMessages }
         jobs.add(
             merge(*flows.toTypedArray())
-                .onEach { data ->
-                    _incomingMessages.emit(data)
+                .onEach { message ->
+                    _incomingMessages.emit(message)
                 }
                 .launchIn(scope)
         )

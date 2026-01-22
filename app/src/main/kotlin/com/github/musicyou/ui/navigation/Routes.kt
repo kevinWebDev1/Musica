@@ -44,4 +44,7 @@ sealed class Routes {
 
     @Serializable
     data object Onboarding
+
+    @Serializable
+    data object Profile
 }

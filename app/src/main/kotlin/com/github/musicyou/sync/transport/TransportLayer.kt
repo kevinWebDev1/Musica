@@ -15,9 +15,17 @@ interface TransportLayer {
     val connectionState: StateFlow<ConnectionState>
 
     /**
-     * Stream of incoming messages (raw bytes).
+     * Represents an incoming message with its sender's unique ID.
      */
-    val incomingMessages: SharedFlow<ByteArray>
+    data class TransportMessage(
+        val senderId: String,
+        val data: ByteArray
+    )
+
+    /**
+     * Stream of incoming messages.
+     */
+    val incomingMessages: SharedFlow<TransportMessage>
 
     /**
      * The active Session ID (if any).

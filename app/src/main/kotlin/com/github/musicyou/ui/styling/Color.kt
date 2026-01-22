@@ -10,6 +10,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 // ============================================================================
 val neonPink = Color(0xFFFF2D88)
 val neonPurple = Color(0xFF9D4EDD)
+val purplishPink = Color(0xFFD633B0) // Blend of Neon Pink and Purple
 val glassBg = Color(0x14FFFFFF)         // rgba(255, 255, 255, 0.08)
 val glassBorder = Color(0x26FFFFFF)     // rgba(255, 255, 255, 0.15)
 val glassHighlight = Color(0x33FFFFFF)  // rgba(255, 255, 255, 0.2)

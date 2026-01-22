@@ -34,6 +34,7 @@ import com.github.musicyou.viewmodels.HomeAlbumsViewModel
 @Composable
 fun HomeAlbums(
     openSearch: () -> Unit,
+    openProfile: () -> Unit,
     openSettings: () -> Unit,
     onAlbumClick: (Album) -> Unit
 ) {
@@ -54,6 +55,7 @@ fun HomeAlbums(
     HomeScaffold(
         title = R.string.albums,
         openSearch = openSearch,
+        openProfile = openProfile,
         openSettings = openSettings
     ) {
         LazyVerticalGrid(
@@ -68,7 +70,7 @@ fun HomeAlbums(
         ) {
             item(
                 key = "header",
-                span = { GridItemSpan(maxCurrentLineSpan) }
+                span = { GridItemSpan(maxLineSpan) }
             ) {
                 SortingHeader(
                     sortBy = sortBy,

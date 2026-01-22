@@ -232,6 +232,9 @@ interface Database {
     @Query("UPDATE Song SET totalPlayTimeMs = totalPlayTimeMs + :addition WHERE id = :id")
     fun incrementTotalPlayTimeMs(id: String, addition: Long)
 
+    @Query("UPDATE Song SET totalPlayTimeMs = (SELECT Coalesce(SUM(playTime), 0) FROM Event WHERE songId = Song.id)")
+    fun recalculateSongStats()
+
     @Query("SELECT * FROM Playlist WHERE id = :id")
     fun playlist(id: Long): Flow<Playlist?>
 
@@ -343,6 +346,9 @@ interface Database {
     @Transaction
     @Query("SELECT * FROM Song ORDER BY RANDOM() LIMIT 1")
     fun randomSong(): Flow<Song?>
+
+    @Query("SELECT * FROM Event ORDER BY timestamp DESC")
+    fun events(): Flow<List<Event>>
 
     @Query("SELECT COUNT (*) FROM Event")
     fun eventsCount(): Flow<Int>

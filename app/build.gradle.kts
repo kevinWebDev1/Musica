@@ -116,7 +116,10 @@ dependencies {
     implementation(libs.webrtc)
     implementation(libs.play.services.nearby)
     implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation("com.google.firebase:firebase-database-ktx")
+    implementation(libs.play.services.auth)
     
     coreLibraryDesugaring(libs.desugaring)
 }

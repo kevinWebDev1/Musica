@@ -3,8 +3,12 @@ package com.github.musicyou.ui.screens.home
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,6 +48,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -80,7 +87,9 @@ import com.github.musicyou.utils.isLandscape
 import com.github.musicyou.utils.onboardedKey
 import com.github.musicyou.utils.quickPicksSourceKey
 import com.github.musicyou.utils.rememberPreference
+import com.github.musicyou.utils.profileImageUrlKey
 import com.github.musicyou.viewmodels.QuickPicksViewModel
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -90,6 +99,7 @@ import androidx.media3.common.Player
 @Composable
 fun QuickPicks(
     openSearch: () -> Unit,
+    openProfile: () -> Unit,
     openSettings: () -> Unit,
     onAlbumClick: (String) -> Unit,
     onArtistClick: (String) -> Unit,
@@ -112,6 +122,8 @@ fun QuickPicks(
         .padding(bottom = 8.dp)
 
     val onboarded by rememberPreference(onboardedKey, defaultValue = false)
+    val profileImageUrl = com.github.musicyou.utils.observePreference(profileImageUrlKey, defaultValue = "").value
+    val profileImageLastUpdated = com.github.musicyou.utils.observePreference(com.github.musicyou.utils.profileImageLastUpdatedKey, defaultValue = 0L).value
 
     LaunchedEffect(quickPicksSource, onboarded) {
         viewModel.loadQuickPicks(quickPicksSource = quickPicksSource)
@@ -151,7 +163,51 @@ fun QuickPicks(
             }
         },
         openSearch = openSearch,
-        openSettings = openSettings
+        openProfile = openProfile,
+        openSettings = openSettings,
+        profileContent = {
+            Box(
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .size(32.dp)
+                    .clickable { openProfile() }
+            ) {
+                val finalPhotoUrl = remember(profileImageUrl, profileImageLastUpdated) {
+                    if (profileImageUrl.isNotBlank() && profileImageLastUpdated > 0) {
+                        "$profileImageUrl?ts=$profileImageLastUpdated"
+                    } else {
+                        profileImageUrl
+                    }
+                }
+
+                if (finalPhotoUrl.isNotEmpty()) {
+                    AsyncImage(
+                        model = finalPhotoUrl,
+                        contentDescription = stringResource(R.string.profile),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                     Image(
+                        painter = painterResource(id = R.drawable.app_icon), // Fallback
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                }
+                
+                // Online Status Indicator
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .align(Alignment.BottomEnd)
+                        .background(Color.Green, CircleShape)
+                )
+            }
+        }
     ) {
         BoxWithConstraints {
             val quickPicksLazyGridItemWidthFactor =
@@ -193,7 +249,7 @@ fun QuickPicks(
                     LazyHorizontalGrid(
                         state = quickPicksLazyGridState,
                         rows = GridCells.Fixed(count = 4),
-                        flingBehavior = rememberSnapFlingBehavior(snapLayoutInfoProvider),
+                        // removed snap behavior for better scroll sensitivity
                         modifier = Modifier
                              .fillMaxWidth()
                             .height((songThumbnailSizeDp + 16.dp + Dimensions.itemsVerticalPadding * 2) * 4),

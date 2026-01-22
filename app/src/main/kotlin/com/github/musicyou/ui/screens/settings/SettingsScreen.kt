@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -14,12 +15,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,8 +42,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.github.musicyou.auth.ProfileManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.github.musicyou.LocalPlayerPadding
@@ -55,6 +71,9 @@ fun SettingsScreen(
     val playerPadding = LocalPlayerPadding.current
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -96,7 +115,93 @@ fun SettingsScreen(
                     }
                 )
             }
+            
+            // Logout Option
+            ListItem(
+                headlineContent = {
+                    Text(text = "Logout")
+                },
+                modifier = Modifier.clickable {
+                    // Sign out from Firebase
+                    com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+                    
+                    // Clear local preferences
+                    context.getSharedPreferences("preferences", android.content.Context.MODE_PRIVATE).edit().clear().apply()
+                    
+                    // Navigate back to login/onboarding
+                    pop()
+                },
+                leadingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ExitToApp,
+                        contentDescription = "Logout"
+                    )
+                }
+            )
+            
+            // Delete Account Option
+            ListItem(
+                headlineContent = {
+                    Text(text = "Delete Account", color = MaterialTheme.colorScheme.error)
+                },
+                modifier = Modifier.clickable { showDeleteDialog = true },
+                leadingContent = {
+                    Icon(
+                        imageVector = Icons.Outlined.DeleteForever,
+                        contentDescription = "Delete Account",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            )
         }
+    }
+    
+    if (showDeleteDialog) {
+        var confirmText by remember { mutableStateOf("") }
+        val isConfirmed = confirmText == "DELETE"
+        
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Account") },
+            text = {
+                Column {
+                    Text("This action is irreversible. All your data will be lost.")
+                    Text("Type 'DELETE' to confirm.", style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                    TextField(
+                        value = confirmText,
+                        onValueChange = { confirmText = it },
+                        placeholder = { Text("DELETE") },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            errorContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            ProfileManager.deleteAccount(context).onSuccess {
+                                // App will likely crash or need restart, ideally navigate to login
+                                // But for now, we just let it clear and hopefully Main handles auth state change
+                            }
+                            showDeleteDialog = false
+                        }
+                    },
+                    enabled = isConfirmed,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete Forever")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

@@ -18,5 +18,6 @@ data class PlaybackState(
         const val STATE_BUFFERING = 2
         const val STATE_READY = 3
         const val STATE_ENDED = 4
+        const val STATE_ERROR = 5  // PHASE 2: Added for load timeout / failure handling
     }
 }

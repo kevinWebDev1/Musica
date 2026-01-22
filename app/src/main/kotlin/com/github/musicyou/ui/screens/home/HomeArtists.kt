@@ -34,6 +34,7 @@ import com.github.musicyou.viewmodels.HomeArtistsViewModel
 @Composable
 fun HomeArtistList(
     openSearch: () -> Unit,
+    openProfile: () -> Unit,
     openSettings: () -> Unit,
     onArtistClick: (Artist) -> Unit
 ) {
@@ -54,6 +55,7 @@ fun HomeArtistList(
     HomeScaffold(
         title = R.string.artists,
         openSearch = openSearch,
+        openProfile = openProfile,
         openSettings = openSettings
     ) {
         LazyVerticalGrid(

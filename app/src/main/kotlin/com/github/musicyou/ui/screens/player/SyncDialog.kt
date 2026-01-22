@@ -37,22 +37,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import coil3.compose.AsyncImage
-import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.R
-import com.github.musicyou.sync.session.SessionManager
+import com.github.musicyou.auth.ProfileManager
+import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.sync.session.SessionState
+import com.github.musicyou.sync.session.SessionManager
+import com.github.musicyou.ui.screens.player.components.ParticipantRow
+import com.github.musicyou.ui.styling.purplishPink
 import com.github.musicyou.utils.DisposableListener
-
-
+import com.github.musicyou.utils.*
+import kotlinx.coroutines.launch
 
 enum class SyncMode {
     LOCAL,      // Nearby Connections (same room)
@@ -70,10 +78,26 @@ fun SyncDialog(
     var inputSessionCode by remember { mutableStateOf("") }
     var isJoining by remember { mutableStateOf(false) }
     var syncMode by remember { mutableStateOf(SyncMode.INTERNET) }
+    val toastContext = LocalContext.current
+    val myAvatar by observePreference(profileImageUrlKey, "")
+    val myName by observePreference(displayNameKey, "You")
+    
+    // Show toast when participant joins
+    val previousPeerCount = remember { mutableStateOf(0) }
+    LaunchedEffect(sessionState.connectedPeers.size) {
+        if (sessionState.isHost && sessionState.connectedPeers.size > previousPeerCount.value) {
+            val newPeers = sessionState.connectedPeers.drop(previousPeerCount.value)
+            newPeers.forEach { peerId ->
+                val peerName = sessionState.connectedPeerNames[peerId] ?: "Someone"
+                android.widget.Toast.makeText(toastContext, "$peerName joined!", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        previousPeerCount.value = sessionState.connectedPeers.size
+    }
     
     // Get current media item from the actual player (same approach as Player.kt)
     val binder = LocalPlayerServiceBinder.current
-    var currentMediaItem by remember { mutableStateOf(binder?.player?.currentMediaItem) }
+    var currentMediaItem by remember { mutableStateOf<MediaItem?>(binder?.player?.currentMediaItem) }
     
     // Listen to player media item and metadata changes
     binder?.player?.DisposableListener {
@@ -218,6 +242,7 @@ fun SyncDialog(
                                 SessionState.SyncStatus.WAITING -> "🔴"
                                 SessionState.SyncStatus.SYNCING -> "🟡"
                                 SessionState.SyncStatus.READY -> "🟢"
+                                SessionState.SyncStatus.ERROR -> "❌"
                             },
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -228,12 +253,14 @@ fun SyncDialog(
                                 SessionState.SyncStatus.WAITING -> "Waiting..."
                                 SessionState.SyncStatus.SYNCING -> "Syncing clocks..."
                                 SessionState.SyncStatus.READY -> "Ready to sync!"
+                                SessionState.SyncStatus.ERROR -> "Error"
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = when (sessionState.syncStatus) {
                                 SessionState.SyncStatus.WAITING -> MaterialTheme.colorScheme.error
                                 SessionState.SyncStatus.SYNCING -> MaterialTheme.colorScheme.tertiary
                                 SessionState.SyncStatus.READY -> MaterialTheme.colorScheme.primary
+                                SessionState.SyncStatus.ERROR -> MaterialTheme.colorScheme.error
                             }
                         )
                     }
@@ -355,28 +382,14 @@ fun SyncDialog(
                     }
 
                     // Display list of connected participants
-                    if (sessionState.connectedPeerNames.isNotEmpty()) {
+                    // Display list of connected participants (only when session is active)
+                    if (sessionState.sessionId != null) {
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Connected Participants (${sessionState.connectedPeerNames.size}):",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
+                        ParticipantRow(
+                            sessionState = sessionState,
+                            myAvatar = myAvatar,
+                            myName = myName
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        
-                        Column(
-                            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
-                        ) {
-                            sessionState.connectedPeerNames.values.forEach { name ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("👤", modifier = Modifier.padding(end = 8.dp))
-                                    Text(
-                                        text = name,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-                            }
-                        }
                     }
                 } else {
                     // No Session - Show mode selector

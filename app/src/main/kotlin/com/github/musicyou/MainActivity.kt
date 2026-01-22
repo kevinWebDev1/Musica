@@ -43,6 +43,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.github.innertube.Innertube
 import com.github.innertube.requests.playlistPage
 import com.github.innertube.requests.song
@@ -58,9 +59,13 @@ import com.github.musicyou.utils.forcePlay
 import com.github.musicyou.utils.intent
 import com.github.musicyou.utils.hasReviewedKey
 import com.github.musicyou.utils.lastReviewRemindTimeKey
+import com.github.musicyou.utils.launchCountKey
 import com.github.musicyou.utils.preferences
 import com.github.musicyou.ui.components.ReviewReminderDialog
 import androidx.core.content.edit
+import com.github.musicyou.auth.AuthManager
+import com.github.musicyou.ui.screens.auth.GoogleSignInScreen
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -80,6 +85,7 @@ class MainActivity : ComponentActivity() {
 
     private var binder by mutableStateOf<PlayerService.Binder?>(null)
     private var data by mutableStateOf<Uri?>(null)
+    private lateinit var authManager: AuthManager
 
     override fun onStart() {
         super.onStart()
@@ -92,10 +98,26 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Initialize AuthManager
+        authManager = AuthManager(this)
+
         val launchedFromNotification = intent?.extras?.getBoolean("expandPlayerBottomSheet") == true
         data = intent?.data ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
 
         setContent {
+            // Check authentication state
+            val currentUser by authManager.currentUser.collectAsState()
+
+            // Show login screen if not authenticated, otherwise show main app
+            if (currentUser == null) {
+                GoogleSignInScreen(
+                    authManager = authManager,
+                    onSignedIn = {
+                        // User signed in successfully - UI will automatically recompose
+                        android.util.Log.i("MainActivity", "User signed in: ${authManager.currentUser.value?.displayName}")
+                    }
+                )
+            } else {
             val navController = rememberNavController()
             val scope = rememberCoroutineScope()
             val playerState = rememberStandardBottomSheetState(
@@ -130,8 +152,20 @@ class MainActivity : ComponentActivity() {
 
                         Scaffold(
                             bottomBar = {
+                                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                                val currentDestination = navBackStackEntry?.destination
+                                
+                                // Robust check: Class name or String contains
+                                val route = currentDestination?.route
+                                val isOnboarding = route?.contains("Onboarding") == true || 
+                                                  route == "com.github.musicyou.ui.navigation.Routes.Onboarding"
+
+                                if (route != null) {
+                                    android.util.Log.d("MainActivity", "BottomBar: route=$route, isOnboarding=$isOnboarding")
+                                }
+
                                 AnimatedVisibility(
-                                    visible = playerState.targetValue != SheetValue.Expanded,
+                                    visible = playerState.targetValue != SheetValue.Expanded && !isOnboarding,
                                     enter = slideInVertically(initialOffsetY = { it / 2 }),
                                     exit = slideOutVertically(targetOffsetY = { it })
                                 ) {
@@ -175,11 +209,20 @@ class MainActivity : ComponentActivity() {
                         
                         LaunchedEffect(Unit) {
                             val prefs = context.preferences
+                            
+                            // Increment launch count
+                            val currentLaunches = prefs.getInt(launchCountKey, 0) + 1
+                            prefs.edit { putInt(launchCountKey, currentLaunches) }
+                            
                             val hasReviewed = prefs.getBoolean(hasReviewedKey, false)
                             val lastRemindTime = prefs.getLong(lastReviewRemindTimeKey, 0L)
                             val currentTime = System.currentTimeMillis()
                             
-                            if (!hasReviewed && (currentTime - lastRemindTime) >= 24 * 60 * 60 * 1000) {
+                            // Industry best practice: Don't ask for review immediately.
+                            // We wait until at least the 3rd launch to ensure the user has used the app.
+                            if (!hasReviewed && 
+                                currentLaunches >= 3 && 
+                                (currentTime - lastRemindTime) >= 24 * 60 * 60 * 1000) {
                                 showReviewDialog = true
                             }
                         }
@@ -276,6 +319,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 data = null
+            }
             }
         }
     }

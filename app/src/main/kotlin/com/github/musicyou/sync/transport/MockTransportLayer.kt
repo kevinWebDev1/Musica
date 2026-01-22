@@ -16,8 +16,8 @@ class MockTransportLayer : TransportLayer {
     private val _connectionState = MutableStateFlow(TransportLayer.ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<TransportLayer.ConnectionState> = _connectionState.asStateFlow()
 
-    private val _incomingMessages = MutableSharedFlow<ByteArray>()
-    override val incomingMessages: SharedFlow<ByteArray> = _incomingMessages.asSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<TransportLayer.TransportMessage>()
+    override val incomingMessages: SharedFlow<TransportLayer.TransportMessage> = _incomingMessages.asSharedFlow()
 
     private val _sessionId = MutableStateFlow<String?>(null)
     override val sessionId: StateFlow<String?> = _sessionId.asStateFlow()
@@ -48,8 +48,8 @@ class MockTransportLayer : TransportLayer {
     /**
      * Helper method to simulate receiving a message from the network.
      */
-    suspend fun simulateIncomingMessage(data: ByteArray) {
-        _incomingMessages.emit(data)
+    suspend fun simulateIncomingMessage(data: ByteArray, senderId: String = "mock-peer") {
+        _incomingMessages.emit(TransportLayer.TransportMessage(senderId, data))
     }
     
     fun setConnected(connected: Boolean) {

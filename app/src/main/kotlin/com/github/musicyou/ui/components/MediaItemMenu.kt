@@ -71,6 +71,7 @@ import com.github.musicyou.utils.playlistSortByKey
 import com.github.musicyou.utils.playlistSortOrderKey
 import com.github.musicyou.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -123,6 +124,7 @@ fun InPlaylistMediaItemMenu(
     onGoToAlbum: (String) -> Unit,
     onGoToArtist: (String) -> Unit
 ) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     NonQueuedMediaItemMenu(
         mediaItem = song.asMediaItem,
         onDismiss = onDismiss,
@@ -130,6 +132,9 @@ fun InPlaylistMediaItemMenu(
             transaction {
                 Database.move(playlistId, positionInPlaylist, Int.MAX_VALUE)
                 Database.delete(SongPlaylistMap(song.id, playlistId, Int.MAX_VALUE))
+            }
+            scope.launch {
+                com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
             }
         },
         modifier = modifier,
@@ -216,6 +221,7 @@ fun BaseMediaItemMenu(
     onGoToAlbum: ((String) -> Unit)? = null,
     onGoToArtist: ((String) -> Unit)? = null
 ) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
 
     MediaItemMenu(
@@ -231,13 +237,17 @@ fun BaseMediaItemMenu(
         onAddToPlaylist = { playlist, position ->
             transaction {
                 Database.insert(mediaItem)
+                val id = Database.insert(playlist).takeIf { it != -1L } ?: playlist.id
                 Database.insert(
                     SongPlaylistMap(
                         songId = mediaItem.mediaId,
-                        playlistId = Database.insert(playlist).takeIf { it != -1L } ?: playlist.id,
+                        playlistId = id,
                         position = position
                     )
                 )
+                scope.launch {
+                    com.github.musicyou.auth.SyncManager.backupSinglePlaylist(id)
+                }
             }
         },
         onGoToAlbum = onGoToAlbum,
@@ -280,6 +290,8 @@ fun MediaItemMenu(
     var isViewingPlaylists by remember {
         mutableStateOf(false)
     }
+
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     var height by remember {
         mutableStateOf(0.dp)
@@ -424,6 +436,9 @@ fun MediaItemMenu(
                                             ) == 0
                                         ) {
                                             Database.insert(mediaItem, Song::toggleLike)
+                                            scope.launch {
+                                                com.github.musicyou.auth.SyncManager.backupFavorites()
+                                            }
                                         }
                                     }
                                 }

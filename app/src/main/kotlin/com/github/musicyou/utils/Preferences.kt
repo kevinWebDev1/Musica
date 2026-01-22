@@ -3,8 +3,10 @@ package com.github.musicyou.utils
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SnapshotMutationPolicy
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +45,17 @@ const val favoriteGenresKey = "favoriteGenres"
 const val onboardedKey = "onboarded"
 const val lastReviewRemindTimeKey = "lastReviewRemindTime"
 const val hasReviewedKey = "hasReviewed"
+const val launchCountKey = "launchCount"
+const val displayNameKey = "displayName"
+const val usernameKey = "username"
+const val profileImageUrlKey = "profileImageUrl"
+const val profileImageLastUpdatedKey = "profileImageLastUpdated"
+const val isProfileUpdatePendingKey = "isProfileUpdatePending"
+
+// Real-time presence privacy settings (default: true for all)
+const val shareOnlineStatusKey = "shareOnlineStatus"
+const val shareListeningStatusKey = "shareListeningStatus"
+const val shareSessionInfoKey = "shareSessionInfo"
 
 inline fun <reified T : Enum<T>> SharedPreferences.getEnum(
     key: String,
@@ -117,4 +130,45 @@ inline fun <T> mutableStatePreferenceOf(
                 if (!areEquals) onStructuralInequality(b)
                 return areEquals
             }
-        })
+        }
+    )
+
+@Composable
+fun observePreference(key: String, defaultValue: String): androidx.compose.runtime.State<String> {
+    val context = LocalContext.current
+    val prefs = remember { context.preferences }
+    val state = remember { mutableStateOf(prefs.getString(key, defaultValue) ?: defaultValue) }
+
+    DisposableEffect(key) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, changedKey ->
+            if (changedKey == key) {
+                state.value = sharedPreferences.getString(key, defaultValue) ?: defaultValue
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+    return state
+}
+
+@Composable
+fun observePreference(key: String, defaultValue: Long): androidx.compose.runtime.State<Long> {
+    val context = LocalContext.current
+    val prefs = remember { context.preferences }
+    val state = remember { mutableStateOf(prefs.getLong(key, defaultValue)) }
+
+    DisposableEffect(key) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, changedKey ->
+            if (changedKey == key) {
+                state.value = sharedPreferences.getLong(key, defaultValue)
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+    return state
+}

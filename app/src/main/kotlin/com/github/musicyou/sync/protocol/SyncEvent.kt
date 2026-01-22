@@ -28,7 +28,8 @@ data class PlayEvent(
     val title: String? = null,
     val artist: String? = null,
     val thumbnailUrl: String? = null,
-    val requesterName: String? = null
+    val requesterName: String? = null,
+    val requesterAvatar: String? = null
 ) : SyncEvent()
 
 /**
@@ -40,7 +41,8 @@ data class PlayEvent(
 data class PauseEvent(
     val pos: Long,
     override val timestamp: Long,
-    val requesterName: String? = null
+    val requesterName: String? = null,
+    val requesterAvatar: String? = null
 ) : SyncEvent()
 
 /**
@@ -52,7 +54,8 @@ data class PauseEvent(
 data class SeekEvent(
     val pos: Long,
     override val timestamp: Long,
-    val requesterName: String? = null
+    val requesterName: String? = null,
+    val requesterAvatar: String? = null
 ) : SyncEvent()
 
 /**
@@ -69,7 +72,9 @@ data class StateSyncEvent(
  */
 data class RequestStateEvent(
     override val timestamp: Long,
-    val senderName: String? = null  // Name of the joining participant
+    val senderName: String? = null,   // Name of the joining participant
+    val senderAvatar: String? = null,  // Avatar URL of the joining participant
+    val senderUid: String? = null     // Firebase UID of the joining participant
 ) : SyncEvent()
 
 /**
@@ -78,6 +83,8 @@ data class RequestStateEvent(
  */
 data class JoinEvent(
     val name: String,
+    val avatar: String? = null,
+    val uid: String? = null,
     override val timestamp: Long
 ) : SyncEvent()
 

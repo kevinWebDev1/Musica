@@ -1,0 +1,71 @@
+{
+  "rules": {
+    "presence": {
+      "$uid": {
+        ".read": true,
+        ".write": "$uid === auth.uid",
+        "online": {
+          ".validate": "newData.isBoolean()"
+        },
+        "lastSeen": {
+          ".validate": "newData.isNumber()"
+        },
+        "status": {
+          ".validate": "newData.isString() && (newData.val() === 'idle' || newData.val() === 'hosting' || newData.val() === 'participating')"
+        },
+        "sessionId": {
+          ".validate": "newData.isString()"
+        },
+        "currentSong": {
+          "id": {
+            ".validate": "newData.isString()"
+          },
+          "title": {
+            ".validate": "newData.isString()"
+          },
+          "artist": {
+            ".validate": "newData.isString()"
+          },
+          "albumArt": {
+            ".validate": "newData.isString()"
+          },
+          "startedAt": {
+            ".validate": "newData.isNumber()"
+          }
+        }
+      }
+    },
+    "sessions": {
+      ".read": true,
+      "$sessionId": {
+        ".write": "(!data.exists() && auth != null) || (data.exists() && data.child('host').val() === auth.uid)",
+        "host": {
+          ".validate": "newData.isString()"
+        },
+        "startedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "song": {
+          "id": {
+            ".validate": "newData.isString()"
+          },
+          "title": {
+            ".validate": "newData.isString()"
+          },
+          "artist": {
+            ".validate": "newData.isString()"
+          },
+          "started_at": {
+            ".validate": "newData.isNumber()"
+          }
+        },
+        "members": {
+          "$memberUid": {
+            ".write": "$memberUid === auth.uid || root.child('sessions').child($sessionId).child('host').val() === auth.uid",
+            ".validate": "newData.isBoolean() && newData.val() === true"
+          }
+        }
+      }
+    }
+  }
+}
