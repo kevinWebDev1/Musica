@@ -73,9 +73,9 @@ fun GoogleSignInScreen(
                         scope.launch {
                             com.github.musicyou.auth.SyncManager.restoreUserData(context)
                             ProfileManager.fetchUserProfile(context)
+                            isLoading = false
+                            onSignedIn()
                         }
-                        isLoading = false
-                        onSignedIn()
                     },
                     onFailure = { error ->
                         Log.e("GoogleSignInScreen", "Sign-in failed", error)

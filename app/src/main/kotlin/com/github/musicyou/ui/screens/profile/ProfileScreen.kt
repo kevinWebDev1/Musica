@@ -210,6 +210,9 @@ fun ProfileScreen(
     }
     
     LaunchedEffect(Unit) {
+        if (displayName.isBlank() || username.isBlank()) {
+            ProfileManager.fetchUserProfile(context)
+        }
         refreshData()
     }
 

@@ -267,7 +267,6 @@ object ProfileManager {
                     (doc.get("vibes") as? List<String>)?.let { 
                         putString(com.github.musicyou.utils.favoriteGenresKey, it.joinToString(",")) 
                     }
-                    putBoolean(onboardedKey, true)
                 }
                 
                 com.github.musicyou.sync.SyncPreferences.setUserName(context, displayName)
