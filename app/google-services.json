@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "98221868348",
+    "firebase_url": "https://musicyou-sync-default-rtdb.asia-southeast1.firebasedatabase.app",
     "project_id": "musicyou-sync",
     "storage_bucket": "musicyou-sync.firebasestorage.app"
   },
@@ -14,11 +15,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "98221868348-r2qnescsc6httaa1cfm9mshhsba15rot.apps.googleusercontent.com",
+          "client_id": "98221868348-tjeatte8h7o84i8p2j64932vp8nk8lds.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.github.musicyou",
-            "certificate_hash": "7be1740168f27570be44a12d32d0001712ed4a3e"
+            "certificate_hash": "283898ea6952f101cbc78dc609cdd327b071eb13"
           }
         },
         {
