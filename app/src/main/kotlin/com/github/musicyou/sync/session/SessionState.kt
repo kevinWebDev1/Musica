@@ -13,6 +13,7 @@ package com.github.musicyou.sync.session
 data class SessionState(
     val sessionId: String? = null,
     val isHost: Boolean = false,
+    val hostUid: String? = null, // The Firebase UID of the host
     val connectedPeers: Set<String> = emptySet(),
 
     val currentMediaId: String? = null,
@@ -35,6 +36,12 @@ data class SessionState(
     // Connected peer names for display (Map of peerId to name)
     val connectedPeerNames: Map<String, String> = emptyMap(),
     
+    // Connected peer avatars (Map of peerId to photoUrl)
+    val connectedPeerAvatars: Map<String, String?> = emptyMap(),
+    
+    // Connected peer UIDs (Map of peerId to Firebase UID)
+    val connectedPeerUids: Map<String, String?> = emptyMap(),
+    
     // Version control - monotonically increasing, set by Host
     val stateVersion: Long = 0L,
     
@@ -53,11 +60,13 @@ data class SessionState(
      * WAITING - Host waiting for participants, Participant connecting
      * SYNCING - Clock calibration in progress
      * READY - Ready to start synchronized playback
+     * ERROR - Connection lost or critical failure
      */
     enum class SyncStatus {
         WAITING,   // Host: waiting for participants, Participant: connecting
         SYNCING,   // Clock calibration in progress
-        READY      // Ready for synchronized playback
+        READY,     // Ready for synchronized playback
+        ERROR      // Connection lost, timeout, or critical failure
     }
 }
 

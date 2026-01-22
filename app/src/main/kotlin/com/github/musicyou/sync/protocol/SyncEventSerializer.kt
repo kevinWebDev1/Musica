@@ -23,6 +23,7 @@ object SyncEventSerializer {
                 event.artist?.let { json.put("artist", it) }
                 event.thumbnailUrl?.let { json.put("thumbnailUrl", it) }
                 event.requesterName?.let { json.put("requesterName", it) }
+                event.requesterAvatar?.let { json.put("requesterAvatar", it) }
             }
             is PauseEvent -> {
                 json.put("type", "PAUSE")
@@ -37,15 +38,20 @@ object SyncEventSerializer {
             is RequestStateEvent -> {
                 json.put("type", "REQUEST_STATE")
                 event.senderName?.let { json.put("senderName", it) }
+                event.senderAvatar?.let { json.put("senderAvatar", it) }
+                event.senderUid?.let { json.put("senderUid", it) }
             }
             is JoinEvent -> {
                 json.put("type", "JOIN")
                 json.put("name", event.name)
+                event.avatar?.let { json.put("avatar", it) }
+                event.uid?.let { json.put("uid", it) }
             }
             is StateSyncEvent -> {
                 json.put("type", "STATE_SYNC")
                 val stateJson = JSONObject()
                 stateJson.put("sessionId", event.state.sessionId)
+                event.state.hostUid?.let { stateJson.put("hostUid", it) }
                 stateJson.put("isHost", event.state.isHost)
                 // Connected Peers is a list
                 // stateJson.put("connectedPeers", ... ) // Simplified for now
@@ -61,12 +67,25 @@ object SyncEventSerializer {
                 stateJson.put("syncStatus", event.state.syncStatus.name)
                 event.state.clockSyncMessage?.let { stateJson.put("clockSyncMessage", it) }
                 
-                // Serialize connected peer names
                 val namesJson = JSONObject()
                 event.state.connectedPeerNames.forEach { (key, value) ->
                     namesJson.put(key, value)
                 }
                 stateJson.put("connectedPeerNames", namesJson)
+                
+                // Serialize connected peer avatars
+                val avatarsJson = JSONObject()
+                event.state.connectedPeerAvatars.forEach { (key, value) ->
+                    avatarsJson.put(key, value ?: "")
+                }
+                stateJson.put("connectedPeerAvatars", avatarsJson)
+                
+                // Serialize connected peer UIDs
+                val uidsJson = JSONObject()
+                event.state.connectedPeerUids.forEach { (key, value) ->
+                    uidsJson.put(key, value ?: "")
+                }
+                stateJson.put("connectedPeerUids", uidsJson)
                 
                 // Metadata
                 event.state.title?.let { stateJson.put("title", it) }
@@ -107,7 +126,8 @@ object SyncEventSerializer {
                     title = json.optString("title", null).takeIf { it?.isNotEmpty() == true },
                     artist = json.optString("artist", null).takeIf { it?.isNotEmpty() == true },
                     thumbnailUrl = json.optString("thumbnailUrl", null).takeIf { it?.isNotEmpty() == true },
-                    requesterName = json.optString("requesterName", null).takeIf { it?.isNotEmpty() == true }
+                    requesterName = json.optString("requesterName", null).takeIf { it?.isNotEmpty() == true },
+                    requesterAvatar = json.optString("requesterAvatar", null).takeIf { it?.isNotEmpty() == true }
                 )
                 "PAUSE" -> PauseEvent(
                     pos = json.getLong("pos"),
@@ -121,10 +141,14 @@ object SyncEventSerializer {
                 )
                 "REQUEST_STATE" -> RequestStateEvent(
                     timestamp = timestamp,
-                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true }
+                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true },
+                    senderAvatar = json.optString("senderAvatar", null).takeIf { it?.isNotEmpty() == true },
+                    senderUid = json.optString("senderUid", null).takeIf { it?.isNotEmpty() == true }
                 )
                 "JOIN" -> JoinEvent(
                     name = json.getString("name"),
+                    avatar = json.optString("avatar", null).takeIf { it?.isNotEmpty() == true },
+                    uid = json.optString("uid", null).takeIf { it?.isNotEmpty() == true },
                     timestamp = timestamp
                 )
                 "STATE_SYNC" -> {
@@ -141,12 +165,29 @@ object SyncEventSerializer {
                         }
                     }
                     
+                    // Deserialize connected peer avatars
+                    val connectedAvatarsMap = mutableMapOf<String, String?>()
+                    val avatarsJson = stateJson.optJSONObject("connectedPeerAvatars")
+                    avatarsJson?.keys()?.forEach { key ->
+                        val avatar = avatarsJson.optString(key)
+                        connectedAvatarsMap[key] = if (avatar.isNullOrEmpty()) null else avatar
+                    }
+                    
+                    // Deserialize connected peer uids
+                    val connectedUidsMap = mutableMapOf<String, String?>()
+                    val uidsJson = stateJson.optJSONObject("connectedPeerUids")
+                    uidsJson?.keys()?.forEach { key ->
+                        val uid = uidsJson.optString(key)
+                        connectedUidsMap[key] = if (uid.isNullOrEmpty()) null else uid
+                    }
+                    
                     // Deserialize sync status
                     val syncStatusStr = stateJson.optString("syncStatus", "WAITING")
                     val syncStatus = try { SessionState.SyncStatus.valueOf(syncStatusStr) } catch (e: Exception) { SessionState.SyncStatus.WAITING }
                     
                     val state = SessionState(
                         sessionId = stateJson.optString("sessionId", null),
+                        hostUid = stateJson.optString("hostUid", null).takeIf { it?.isNotEmpty() == true },
                         isHost = stateJson.getBoolean("isHost"),
                         connectedPeers = emptySet(), // Rehydrate peers? Not strictly needed for sync logic
                         currentMediaId = stateJson.optString("currentMediaId", null),
@@ -159,6 +200,8 @@ object SyncEventSerializer {
                         thumbnailUrl = stateJson.optString("thumbnailUrl", null).takeIf { it?.isNotEmpty() == true },
                         hostOnlyMode = stateJson.optBoolean("hostOnlyMode", false),
                         connectedPeerNames = connectedNamesMap,
+                        connectedPeerAvatars = connectedAvatarsMap,
+                        connectedPeerUids = connectedUidsMap,
                         stateVersion = stateJson.optLong("stateVersion", 0L),
                         syncStatus = syncStatus,
                         clockSyncMessage = stateJson.optString("clockSyncMessage", null).takeIf { it?.isNotEmpty() == true }
