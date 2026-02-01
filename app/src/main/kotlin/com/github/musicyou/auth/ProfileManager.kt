@@ -11,9 +11,12 @@ import com.github.musicyou.utils.onboardedKey
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.google.firebase.functions.ktx.functions
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
 import com.github.musicyou.utils.profileImageLastUpdatedKey
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import kotlinx.coroutines.channels.awaitClose
@@ -250,13 +253,24 @@ object ProfileManager {
     }
 
     suspend fun fetchUserProfile(context: Context): Boolean {
-        val user = auth.currentUser ?: return false
+        val user = auth.currentUser ?: run {
+            android.util.Log.w("ProfileManager", "fetchUserProfile: No authenticated user")
+            return false
+        }
+        
+        android.util.Log.d("ProfileManager", "fetchUserProfile: Fetching profile for UID: ${user.uid}")
+        
         return try {
             val doc = firestore.collection(USERS_COLLECTION).document(user.uid).get().await()
+            
+            android.util.Log.d("ProfileManager", "fetchUserProfile: Document exists: ${doc.exists()}")
+            
             if (doc.exists()) {
                 val displayName = doc.getString("displayName") ?: ""
                 val username = doc.getString("username") ?: ""
                 val photoUrl = doc.getString("photoUrl")
+                
+                android.util.Log.d("ProfileManager", "fetchUserProfile: Found profile - name: '$displayName', username: '$username'")
                 
                 context.preferences.edit {
                     putString(displayNameKey, displayName)
@@ -271,11 +285,14 @@ object ProfileManager {
                 
                 com.github.musicyou.sync.SyncPreferences.setUserName(context, displayName)
                 
+                android.util.Log.d("ProfileManager", "fetchUserProfile: Successfully loaded profile")
                 true
             } else {
+                android.util.Log.w("ProfileManager", "fetchUserProfile: Document does not exist for UID: ${user.uid}")
                 false
             }
         } catch (e: Exception) {
+            android.util.Log.e("ProfileManager", "fetchUserProfile: Error fetching profile", e)
             false
         }
     }
@@ -450,44 +467,143 @@ object ProfileManager {
 
     /**
      * Removes a friend (Mutual Unfollow).
+     * Uses suspend .await() to avoid blocking the main thread.
      */
     suspend fun removeFriend(friendUid: String): Result<Unit> {
-        val user = auth.currentUser ?: return Result.failure(Exception("User not logged in"))
         return try {
-            firestore.runTransaction { transaction ->
-                val myFriendDoc = firestore.collection(USERS_COLLECTION).document(user.uid)
-                    .collection("friends").document(friendUid)
-                val theirFriendDoc = firestore.collection(USERS_COLLECTION).document(friendUid)
-                    .collection("friends").document(user.uid)
-                
-                transaction.delete(myFriendDoc)
-                transaction.delete(theirFriendDoc)
-            }.await()
+            val user = auth.currentUser ?: return Result.failure(Exception("User not logged in"))
+            
+            // Delete from my friends
+            firestore.collection(USERS_COLLECTION)
+                .document(user.uid)
+                .collection("friends")
+                .document(friendUid)
+                .delete()
+                .await()
+
+            // Delete from friend's friends
+            firestore.collection(USERS_COLLECTION)
+                .document(friendUid)
+                .collection("friends")
+                .document(user.uid)
+                .delete()
+                .await()
+
             Result.success(Unit)
         } catch (e: Exception) {
+            android.util.Log.e("ProfileManager", "removeFriend failed", e)
             Result.failure(e)
         }
     }
 
     suspend fun deleteAccount(context: Context): Result<Unit> {
         val user = auth.currentUser ?: return Result.failure(Exception("User not logged in"))
+        
+        android.util.Log.d("ProfileManager", "deleteAccount: Starting deletion for UID: ${user.uid}")
+        
         return try {
-            firestore.runTransaction { transaction ->
-                val userDocRef = firestore.collection(USERS_COLLECTION).document(user.uid)
-                val snapshot = transaction.get(userDocRef)
-                
-                val username = snapshot.getString("username")
-                if (!username.isNullOrBlank()) {
-                    transaction.delete(firestore.collection(USERNAMES_COLLECTION).document(username))
+            // 1. Get user data first
+            val userDoc = firestore.collection(USERS_COLLECTION).document(user.uid).get().await()
+            val username = if (userDoc.exists()) userDoc.getString("username") else null
+            
+            android.util.Log.d("ProfileManager", "deleteAccount: Found username: $username")
+            
+            // 2. Fetch all data to delete
+            // Use parallel execution for fetching to be faster
+            val (friendsSnapshot, requestsSnapshot, presenceSnapshot) = coroutineScope {
+                val f = async { 
+                    firestore.collection(USERS_COLLECTION).document(user.uid).collection("friends").get().await() 
                 }
-                
-                transaction.delete(userDocRef)
-            }.await()
-
-            user.delete().await()
-            context.preferences.edit { clear() }
+                val r = async { 
+                    firestore.collection(USERS_COLLECTION).document(user.uid).collection("requests").get().await() 
+                }
+                val p = async { 
+                    firestore.collection(USERS_COLLECTION).document(user.uid).collection("presence").get().await() 
+                }
+                Triple(f.await(), r.await(), p.await())
+            }
+            
+            android.util.Log.d("ProfileManager", "deleteAccount: Fetch complete. Friends: ${friendsSnapshot.size()}, Requests: ${requestsSnapshot.size()}")
+            
+            // 3. Prepare all deletion references
+            val allDeletions = mutableListOf<com.google.firebase.firestore.DocumentReference>()
+            
+            // Subcollections
+            allDeletions.addAll(friendsSnapshot.documents.map { it.reference })
+            allDeletions.addAll(requestsSnapshot.documents.map { it.reference })
+            allDeletions.addAll(presenceSnapshot.documents.map { it.reference })
+            
+            // Main document
+            allDeletions.add(firestore.collection(USERS_COLLECTION).document(user.uid))
+            
+            // Username reservation
+            if (!username.isNullOrBlank()) {
+                allDeletions.add(firestore.collection(USERNAMES_COLLECTION).document(username))
+            }
+            
+            // 4. Execute Batched Deletes (Chunked to respect 500 limit)
+            // Using 400 to be safe
+            val chunks = allDeletions.chunked(400)
+            android.util.Log.d("ProfileManager", "deleteAccount: Processing ${chunks.size} deletion batches")
+            
+            chunks.forEachIndexed { index, chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { ref -> batch.delete(ref) }
+                batch.commit().await()
+                android.util.Log.d("ProfileManager", "deleteAccount: Batch $index/${chunks.size} committed")
+            }
+            
+            // 5. Clean up friend references (remove yourself from others' friend lists)
+            // This is done individually as we can't batch across parent collections easily in a loop without hitting limits
+            // We use a supervisorScope so one failure doesn't stop the rest
+            coroutineScope {
+                val jobs = friendsSnapshot.documents.map { friendDoc ->
+                    launch {
+                        try {
+                            firestore.collection(USERS_COLLECTION)
+                                .document(friendDoc.id)
+                                .collection("friends")
+                                .document(user.uid)
+                                .delete()
+                                .await()
+                        } catch (e: Exception) {
+                            android.util.Log.w("ProfileManager", "deleteAccount: Failed to unlink from friend ${friendDoc.id}: ${e.message}")
+                        }
+                    }
+                }
+                jobs.joinAll() // Wait for all cleanups
+            }
+            
+            // 6. Delete Firebase Auth account
+            // This is the point of no return
+            try {
+                user.delete().await()
+                android.util.Log.d("ProfileManager", "deleteAccount: Firebase Auth account deleted")
+            } catch (e: Exception) {
+                // If this fails (e.g. requires re-auth), we should let the user know
+                // BUT the data is already gone. Ideally we should have checked re-auth BEFORE deleting data.
+                // However, we can't trigger re-auth easily here without UI.
+                // We re-throw so UI can show "Login again to finish deletion" if needed.
+                throw e
+            }
+            
+            // 7. Clear local data
+            try {
+                context.preferences.edit { clear() }
+                context.cacheDir.deleteRecursively()
+                android.util.Log.d("ProfileManager", "deleteAccount: Cache cleared")
+            } catch (e: Exception) {
+                android.util.Log.w("ProfileManager", "deleteAccount: Failed to clear cache: ${e.message}")
+            }
+            
+            android.util.Log.d("ProfileManager", "deleteAccount: Account deletion successful!")
             Result.success(Unit)
+            
+        } catch (e: FirebaseAuthRecentLoginRequiredException) {
+            android.util.Log.e("ProfileManager", "deleteAccount: Re-authentication required", e)
+            Result.failure(Exception("Security Check: Please log in again and retry deletion."))
         } catch (e: Exception) {
+            android.util.Log.e("ProfileManager", "deleteAccount: Deletion failed", e)
             Result.failure(e)
         }
     }
@@ -536,7 +652,8 @@ object ProfileManager {
     fun observeFriendsPresence(): Flow<List<FriendPresence>> = callbackFlow {
         val user = auth.currentUser
         if (user == null) {
-            close(Exception("User not logged in"))
+            android.util.Log.w("ProfileManager", "observeFriendsPresence: User not logged in, returning empty")
+            close()
             return@callbackFlow
         }
 
@@ -567,7 +684,7 @@ object ProfileManager {
                     .document("current")
                     .addSnapshotListener { snapshot, error ->
                         if (error != null) {
-                            // Log error but continue listening to other friends
+                            android.util.Log.e("ProfileManager", "Friend presence listener error", error)
                             return@addSnapshotListener
                         }
 
@@ -604,7 +721,8 @@ object ProfileManager {
                 listeners.forEach { it.remove() }
             }
         } catch (e: Exception) {
-            close(e)
+            android.util.Log.e("ProfileManager", "observeFriendsPresence: Error setting up observers", e)
+            close() // Close gracefully instead of crashing downstream collectors
         }
     }
 
@@ -638,4 +756,166 @@ suspend fun getPublicProfile(uid: String): Result<PublicProfile> = coroutineScop
      * Gets the current user's UID safely.
      */
     fun getCurrentUserUid(): String? = auth.currentUser?.uid
+
+    // ==========================================
+    // PUBLIC PLAYLISTS
+    // ==========================================
+
+    data class PublicPlaylist(
+        val id: String,
+        val name: String,
+        val songCount: Int,
+        val coverUrl: String? = null
+    )
+
+    data class PlaylistSong(
+        val mediaId: String,
+        val title: String,
+        val artist: String,
+        val duration: Long,
+        val thumbnailUrl: String?
+    ) {
+        fun asMediaItem(): androidx.media3.common.MediaItem {
+            return androidx.media3.common.MediaItem.Builder()
+                .setMediaId(mediaId)
+                .setUri(mediaId)
+                .setCustomCacheKey(mediaId) // Important for player caching/resolution
+                .setMediaMetadata(
+                    androidx.media3.common.MediaMetadata.Builder()
+                        .setTitle(title)
+                        .setArtist(artist)
+                        .setArtworkUri(if (thumbnailUrl != null) android.net.Uri.parse(thumbnailUrl) else null)
+                        .setExtras(
+                            androidx.core.os.bundleOf(
+                                "durationText" to com.github.musicyou.utils.formatAsDuration(duration)
+                            )
+                        )
+                        .build()
+                )
+                .build()
+        }
+    }
+
+    suspend fun getPublicPlaylists(uid: String): Result<List<PublicPlaylist>> = coroutineScope {
+        try {
+            val snapshot = firestore.collection(USERS_COLLECTION).document(uid)
+                .collection("public_playlists").get().await()
+
+            val playlists = snapshot.documents.map { doc ->
+                PublicPlaylist(
+                    id = doc.id,
+                    name = doc.getString("name") ?: "Untitled Playlist",
+                    songCount = doc.getLong("songCount")?.toInt() ?: 0,
+                    coverUrl = doc.getString("coverUrl")
+                )
+            }
+            Result.success(playlists)
+        } catch (e: Exception) {
+            Log.e("ProfileManager", "Error fetching public playlists for $uid", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getPublicPlaylistSongs(uid: String, playlistId: String): Result<List<PlaylistSong>> = coroutineScope {
+        try {
+            val snapshot = firestore.collection(USERS_COLLECTION).document(uid)
+                .collection("public_playlists").document(playlistId)
+                .collection("songs").orderBy("position").get().await()
+
+            val songs = snapshot.documents.mapNotNull { doc ->
+                 try {
+                     PlaylistSong(
+                         mediaId = doc.getString("mediaId") ?: return@mapNotNull null,
+                         title = doc.getString("title") ?: "Unknown Title",
+                         artist = doc.getString("artist") ?: "Unknown Artist",
+                         duration = doc.getLong("duration") ?: 0L,
+                         thumbnailUrl = doc.getString("thumbnailUrl")
+                     )
+                 } catch (e: Exception) {
+                     null
+                 }
+            }
+            Result.success(songs)
+        } catch (e: Exception) {
+            Log.e("ProfileManager", "Error fetching songs for playlist $playlistId of user $uid", e)
+            Result.failure(e)
+        }
+    }
+
+
+    // ==========================================
+    // PRIVACY & LIKED SONGS
+    // ==========================================
+
+    data class PrivacySettings(
+        val shareLikedSongs: Boolean = true,
+        val sharePlaylists: Boolean = true,
+        val showActivity: Boolean = true
+    )
+
+    suspend fun getPrivacySettings(): Result<PrivacySettings> = coroutineScope {
+        try {
+            val uid = auth.currentUser?.uid ?: return@coroutineScope Result.failure(Exception("No user"))
+            val snapshot = firestore.collection(USERS_COLLECTION).document(uid).get().await()
+            val privacy = snapshot.get("privacy") as? Map<String, Boolean>
+            
+            Result.success(
+                PrivacySettings(
+                    shareLikedSongs = privacy?.get("shareLikedSongs") ?: true,
+                    sharePlaylists = privacy?.get("sharePlaylists") ?: true,
+                    showActivity = privacy?.get("showActivity") ?: true
+                )
+            )
+        } catch (e: Exception) {
+            Log.e("ProfileManager", "Error fetching privacy settings", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updatePrivacySettings(settings: PrivacySettings) = coroutineScope {
+        try {
+            val uid = auth.currentUser?.uid ?: return@coroutineScope Result.failure(Exception("No user"))
+            firestore.collection(USERS_COLLECTION).document(uid)
+                .update("privacy", mapOf(
+                    "shareLikedSongs" to settings.shareLikedSongs,
+                    "sharePlaylists" to settings.sharePlaylists,
+                    "showActivity" to settings.showActivity
+                )).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("ProfileManager", "Error updating privacy settings", e)
+            Result.failure(e)
+        }
+    }
+    
+    suspend fun getPublicLikedSongs(uid: String): Result<List<PlaylistSong>> = coroutineScope {
+        try {
+            // Check privacy first (or rely on security rules failing)
+            // It's better UI UX to check metadata if available, but here we'll try fetch.
+            // Note: Data is in userData/{uid}/favorites/all
+            
+            val snapshot = firestore.collection("userData").document(uid)
+                .collection("favorites").document("all").get().await()
+                
+            if (!snapshot.exists()) return@coroutineScope Result.success(emptyList())
+
+            val songsData = snapshot.get("songs") as? List<Map<String, Any>>
+            val songs = songsData?.mapNotNull { data ->
+                try {
+                     PlaylistSong(
+                         mediaId = data["id"] as String,
+                         title = data["title"] as String,
+                         artist = data["artistsText"] as? String ?: "Unknown Artist",
+                         duration = 0L, // Duration might not be in favorites backup, or as string
+                         thumbnailUrl = data["thumbnailUrl"] as? String
+                     )
+                } catch (e: Exception) { null }
+            } ?: emptyList()
+            
+            Result.success(songs)
+        } catch (e: Exception) {
+            Log.e("ProfileManager", "Error fetching public liked songs for $uid", e)
+            Result.failure(e)
+        }
+    }
 }

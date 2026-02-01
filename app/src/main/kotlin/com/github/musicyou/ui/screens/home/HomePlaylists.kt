@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +52,7 @@ fun HomePlaylists(
     openProfile: () -> Unit,
     openSettings: () -> Unit,
     onBuiltInPlaylist: (Int) -> Unit,
+    onLocalFilesClick: () -> Unit,
     onPlaylistClick: (Playlist) -> Unit
 ) {
     val playerPadding = LocalPlayerPadding.current
@@ -79,9 +81,7 @@ fun HomePlaylists(
             onDone = { text ->
                 query {
                     val id = Database.insert(Playlist(name = text))
-                    scope.launch {
-                        com.github.musicyou.auth.SyncManager.backupSinglePlaylist(id)
-                    }
+                    com.github.musicyou.auth.SyncManager.triggerBackupPlaylist(id)
                 }
             }
         )
@@ -131,6 +131,14 @@ fun HomePlaylists(
                     icon = Icons.Default.DownloadForOffline,
                     name = stringResource(id = R.string.offline),
                     onClick = { onBuiltInPlaylist(BuiltInPlaylist.Offline.ordinal) }
+                )
+            }
+
+            item(key = "local_files") {
+                BuiltInPlaylistItem(
+                    icon = Icons.Default.Smartphone,
+                    name = "Device Files",
+                    onClick = onLocalFilesClick
                 )
             }
 

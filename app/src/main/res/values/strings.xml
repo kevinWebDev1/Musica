@@ -208,4 +208,13 @@
     <string name="joining">Joining</string>
     <string name="participant">Participant</string>
     <string name="profile">Profile</string>
+    <string name="advanced">Advanced</string>
+    <string name="privacy_settings">Privacy Settings</string>
+    <string name="share_liked_songs">Share Liked Songs</string>
+    <string name="share_public_playlists">Share Public Playlists</string>
+    <string name="show_activity_status">Show Activity Status</string>
+    <string name="delete_account">Delete Account</string>
+    <string name="delete_account_confirmation">Are you sure you want to delete your account? This cannot be undone.</string>
+    <string name="playing_from_local">Playing from Local Storage</string>
+    <string name="switch_to_local">Switch to Local File</string>
 </resources>

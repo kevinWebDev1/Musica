@@ -10,6 +10,7 @@ import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -19,6 +20,27 @@ object SyncManager {
     private val firestore = Firebase.firestore
     private val auth = Firebase.auth
     private const val DATA_COLLECTION = "userData"
+    
+    // Internal scope for background sync operations that must survive UI lifecycle
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    fun triggerBackupFavorites() {
+        scope.launch {
+             backupFavorites()
+        }
+    }
+    
+    fun triggerBackupPlaylist(playlistId: Long) {
+        scope.launch {
+            backupSinglePlaylist(playlistId)
+        }
+    }
+
+    fun triggerDeletePlaylistBackup(playlistId: Long) {
+        scope.launch {
+            deletePlaylistBackup(playlistId)
+        }
+    }
 
     /**
      * Backs up favorites to Firestore.
@@ -39,6 +61,7 @@ object SyncManager {
             }
             firestore.collection(DATA_COLLECTION).document(user.uid)
                 .collection("favorites").document("all").set(mapOf("songs" to data)).await()
+            Log.d("SyncManager", "Backup favorites success: ${favorites.size} songs")
         } catch (e: Exception) {
             Log.e("SyncManager", "Failed to backup favorites", e)
         }
@@ -47,19 +70,17 @@ object SyncManager {
     /**
      * Backs up local playlists to Firestore.
      */
+    /**
+     * Backs up local playlists to Firestore.
+     */
     suspend fun backupPlaylists() {
-        val user = auth.currentUser ?: return
+        // val user = auth.currentUser ?: return // managed by backupSinglePlaylist
         try {
             val previews = Database.playlistPreviewsByNameAsc().first()
             for (preview in previews) {
-                val songs = Database.playlistSongs(preview.id).first()
-                val playlistData = mapOf(
-                    "name" to preview.name,
-                    "songs" to songs.map { it.id }
-                )
-                firestore.collection(DATA_COLLECTION).document(user.uid)
-                    .collection("playlists").document(preview.id.toString()).set(playlistData).await()
+                backupSinglePlaylist(preview.id)
             }
+            Log.d("SyncManager", "Backup playlists success: ${previews.size} playlists")
         } catch (e: Exception) {
             Log.e("SyncManager", "Failed to backup playlists", e)
         }
@@ -100,20 +121,74 @@ object SyncManager {
     /**
      * Backs up a specific playlist to Firestore.
      */
+    /**
+     * Backs up a specific playlist to Firestore.
+     * Also publishes it to 'public_playlists' for social features.
+     */
     suspend fun backupSinglePlaylist(playlistId: Long) {
         val user = auth.currentUser ?: return
         try {
             val playlist = Database.playlist(playlistId).first() ?: return
             val songs = Database.playlistSongs(playlistId).first()
             
+            // 1. Private Backup (Lightweight)
             val playlistData = mapOf(
                 "name" to playlist.name,
                 "songs" to songs.map { it.id }
             )
             firestore.collection(DATA_COLLECTION).document(user.uid)
                 .collection("playlists").document(playlistId.toString()).set(playlistData).await()
+                
+            // 2. Public Publish (Rich Metadata)
+            val publicRef = firestore.collection("users").document(user.uid)
+                .collection("public_playlists").document(playlistId.toString())
+            
+            val publicData = mapOf(
+                "id" to playlistId.toString(),
+                "name" to playlist.name,
+                "songCount" to songs.size,
+                "coverUrl" to songs.firstOrNull()?.thumbnailUrl
+            )
+            publicRef.set(publicData).await()
+            
+            // Batch write songs to subcollection
+            // Delete old songs first (inefficient but safe for strict ordering/removed songs)
+            // Or strictly overwrite. Overwriting by ID is fine if IDs match. But position might change.
+            // Safest: Delete all in subcollection, then add.
+            val oldSongs = publicRef.collection("songs").get().await()
+            val batch = firestore.batch()
+            oldSongs.documents.forEach { batch.delete(it.reference) }
+            
+            songs.forEachIndexed { index, song ->
+                val songDoc = publicRef.collection("songs").document(song.id) // Use mediaId/songId
+                
+                // Parse duration
+                val durationMs = song.durationText?.let { text ->
+                    val parts = text.split(":").reversed()
+                    var seconds = 0L
+                    var multiplier = 1L
+                    for (part in parts) {
+                         seconds += (part.toLongOrNull() ?: 0L) * multiplier
+                         multiplier *= 60
+                    }
+                    seconds * 1000L
+                } ?: 0L
+
+                val songData = mapOf(
+                    "mediaId" to song.id,
+                    "title" to song.title,
+                    "artist" to song.artistsText,
+                    "duration" to durationMs,
+                    "thumbnailUrl" to song.thumbnailUrl,
+                    "position" to index
+                )
+                batch.set(songDoc, songData)
+            }
+            batch.commit().await()
+            Log.d("SyncManager", "Backup/Publish playlist $playlistId success")
+            
         } catch (e: Exception) {
-            Log.e("SyncManager", "Failed to backup playlist $playlistId", e)
+            Log.e("SyncManager", "Failed to backup/publish playlist $playlistId", e)
         }
     }
 
@@ -210,8 +285,15 @@ object SyncManager {
     suspend fun deletePlaylistBackup(playlistId: Long) {
         val user = auth.currentUser ?: return
         try {
+            // 1. Delete Private Backup
             firestore.collection(DATA_COLLECTION).document(user.uid)
                 .collection("playlists").document(playlistId.toString()).delete().await()
+
+            // 2. Delete Public Playlist
+            firestore.collection("users").document(user.uid)
+                .collection("public_playlists").document(playlistId.toString()).delete().await()
+                
+            Log.d("SyncManager", "Delete playlist $playlistId backup/public success")
         } catch (e: Exception) {
             Log.e("SyncManager", "Failed to delete playlist backup", e)
         }

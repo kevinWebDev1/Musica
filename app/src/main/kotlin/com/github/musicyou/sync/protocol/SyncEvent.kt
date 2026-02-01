@@ -29,7 +29,8 @@ data class PlayEvent(
     val artist: String? = null,
     val thumbnailUrl: String? = null,
     val requesterName: String? = null,
-    val requesterAvatar: String? = null
+    val requesterAvatar: String? = null,
+    val mediaFingerprint: com.github.musicyou.sync.session.MediaFingerprint? = null
 ) : SyncEvent()
 
 /**
@@ -90,13 +91,17 @@ data class JoinEvent(
 
 /**
  * Time Synchronization PING.
+ * Also carries authoritative state for validation.
  * @property id Unique ID to match PONG.
  * @property clientTimestamp Time when PING was sent (t0).
  */
 data class PingEvent(
     val id: String,
     val clientTimestamp: Long,
-    override val timestamp: Long // Same as clientTimestamp, required by sealed class
+    override val timestamp: Long, // Same as clientTimestamp, required by sealed class
+    val currentMediaId: String? = null,
+    val currentPos: Long = 0L,
+    val playbackStatus: SessionState.Status = SessionState.Status.PAUSED
 ) : SyncEvent()
 
 /**
@@ -112,4 +117,32 @@ data class PongEvent(
     val serverTimestamp: Long,
     val serverReplyTimestamp: Long,
     override val timestamp: Long // serverReplyTimestamp
+) : SyncEvent()
+
+/**
+ * SOCIAL: Floating Emoji Reaction.
+ */
+data class ReactionEvent(
+    val emoji: String,
+    override val timestamp: Long,
+    val senderName: String? = null
+) : SyncEvent()
+
+/**
+ * SOCIAL: Ephemeral Flash Message.
+ */
+data class FlashMessageEvent(
+    val message: String,
+    override val timestamp: Long,
+    val senderName: String? = null
+) : SyncEvent()
+
+/**
+ * SOCIAL: Kinetic Touch (Ripple/Haptic).
+ * x and y are relative coordinates (0.0 to 1.0).
+ */
+data class KineticTouchEvent(
+    val x: Float,
+    val y: Float,
+    override val timestamp: Long
 ) : SyncEvent()

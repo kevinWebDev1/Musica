@@ -47,4 +47,17 @@ sealed class Routes {
 
     @Serializable
     data object Profile
+
+
+    @Serializable
+    data class FriendProfile(val id: String)
+
+    @Serializable
+    data class PublicPlaylist(val uid: String, val playlistId: String, val playlistName: String)
+
+    @Serializable
+    data object LocalFiles
+
+    @Serializable
+    data object FullscreenPlayer
 }

@@ -80,7 +80,10 @@ class FirebaseSignalingClient(
             
             // Listen for participant's ICE candidates
             iceListener = roomRef.collection("participantIce").addSnapshotListener { snapshot, error ->
-                if (error != null) return@addSnapshotListener
+                if (error != null) {
+                    Log.e(TAG, "FirebaseSignaling: ICE listener error", error)
+                    return@addSnapshotListener
+                }
                 
                 snapshot?.documentChanges?.forEach { change ->
                     val data = change.document.data
@@ -115,7 +118,10 @@ class FirebaseSignalingClient(
             
             // Listen for host's ICE candidates
             iceListener = roomRef.collection("hostIce").addSnapshotListener { snapshot, error ->
-                if (error != null) return@addSnapshotListener
+                if (error != null) {
+                    Log.e(TAG, "FirebaseSignaling: ICE listener error", error)
+                    return@addSnapshotListener
+                }
                 
                 snapshot?.documentChanges?.forEach { change ->
                     val data = change.document.data
@@ -176,21 +182,26 @@ class FirebaseSignalingClient(
     }
     
     override suspend fun disconnect() {
-        Log.d(TAG, "FirebaseSignaling: Disconnecting")
+        disconnectInternal(isReconnect = false)
+    }
+    
+    suspend fun disconnectInternal(isReconnect: Boolean = false) {
+        Log.d(TAG, "FirebaseSignaling: Disconnecting (isReconnect=$isReconnect)")
         sdpListener?.remove()
         iceListener?.remove()
         
         // Optionally clean up room (host only)
-        roomId?.let { id ->
-            if (isHost) {
-                try {
-                    firestore.collection(COLLECTION_ROOMS).document(id).delete().await()
-                } catch (e: Exception) {
-                    Log.w(TAG, "FirebaseSignaling: Failed to delete room", e)
+        if (!isReconnect) {
+            roomId?.let { id ->
+                if (isHost) {
+                    try {
+                        firestore.collection(COLLECTION_ROOMS).document(id).delete().await()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FirebaseSignaling: Failed to delete room", e)
+                    }
                 }
             }
+            roomId = null
         }
-        
-        roomId = null
     }
 }

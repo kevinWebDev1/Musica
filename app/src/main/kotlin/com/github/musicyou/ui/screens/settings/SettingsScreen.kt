@@ -58,6 +58,7 @@ import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.R
 import com.github.musicyou.enums.SettingsSection
 import com.github.musicyou.ui.components.ValueSelectorDialog
+import com.github.musicyou.ui.components.DeleteAccountDialog
 import com.github.musicyou.ui.styling.Dimensions
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,6 +75,17 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteDialog by remember { mutableStateOf(false) }
+
+    val performLogout: () -> Unit = {
+        // Sign out from Firebase
+        com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+        
+        // Clear local preferences
+        context.getSharedPreferences("preferences", android.content.Context.MODE_PRIVATE).edit().clear().apply()
+        
+        // Navigate back to login/onboarding
+        pop()
+    }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -121,16 +133,7 @@ fun SettingsScreen(
                 headlineContent = {
                     Text(text = "Logout")
                 },
-                modifier = Modifier.clickable {
-                    // Sign out from Firebase
-                    com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
-                    
-                    // Clear local preferences
-                    context.getSharedPreferences("preferences", android.content.Context.MODE_PRIVATE).edit().clear().apply()
-                    
-                    // Navigate back to login/onboarding
-                    pop()
-                },
+                modifier = Modifier.clickable { performLogout() },
                 leadingContent = {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.ExitToApp,
@@ -139,67 +142,20 @@ fun SettingsScreen(
                 }
             )
             
-            // Delete Account Option
-            ListItem(
-                headlineContent = {
-                    Text(text = "Delete Account", color = MaterialTheme.colorScheme.error)
-                },
-                modifier = Modifier.clickable { showDeleteDialog = true },
-                leadingContent = {
-                    Icon(
-                        imageVector = Icons.Outlined.DeleteForever,
-                        contentDescription = "Delete Account",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            )
+
         }
     }
     
     if (showDeleteDialog) {
-        var confirmText by remember { mutableStateOf("") }
-        val isConfirmed = confirmText == "DELETE"
-        
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete Account") },
-            text = {
-                Column {
-                    Text("This action is irreversible. All your data will be lost.")
-                    Text("Type 'DELETE' to confirm.", style = MaterialTheme.typography.bodySmall)
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
-                    TextField(
-                        value = confirmText,
-                        onValueChange = { confirmText = it },
-                        placeholder = { Text("DELETE") },
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            errorContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    )
-                }
+        DeleteAccountDialog(
+            onDismiss = { showDeleteDialog = false },
+            onDeleted = {
+                showDeleteDialog = false
+                performLogout()
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            ProfileManager.deleteAccount(context).onSuccess {
-                                // App will likely crash or need restart, ideally navigate to login
-                                // But for now, we just let it clear and hopefully Main handles auth state change
-                            }
-                            showDeleteDialog = false
-                        }
-                    },
-                    enabled = isConfirmed,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete Forever")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel")
-                }
+            onRequireLogin = {
+                showDeleteDialog = false
+                performLogout()
             }
         )
     }

@@ -10,6 +10,8 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Storage
 import com.github.musicyou.R
 
 enum class SettingsSection(
@@ -23,6 +25,10 @@ enum class SettingsSection(
     Player(
         resourceId = R.string.player,
         icon = Icons.Outlined.PlayArrow
+    ),
+    Advanced(
+        resourceId = R.string.advanced,
+        icon = Icons.Rounded.Security
     ),
     Gestures(
         resourceId = R.string.gestures,

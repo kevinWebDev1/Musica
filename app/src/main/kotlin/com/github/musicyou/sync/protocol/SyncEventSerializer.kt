@@ -24,6 +24,15 @@ object SyncEventSerializer {
                 event.thumbnailUrl?.let { json.put("thumbnailUrl", it) }
                 event.requesterName?.let { json.put("requesterName", it) }
                 event.requesterAvatar?.let { json.put("requesterAvatar", it) }
+                // Serialize Media Fingerprint if present
+                event.mediaFingerprint?.let { fp ->
+                    val fpJson = JSONObject()
+                    fpJson.put("title", fp.title)
+                    fpJson.put("durationMs", fp.durationMs)
+                    fpJson.put("sizeBytes", fp.sizeBytes)
+                    fp.mimeType?.let { fpJson.put("mimeType", it) }
+                    json.put("mediaFingerprint", fpJson)
+                }
             }
             is PauseEvent -> {
                 json.put("type", "PAUSE")
@@ -92,6 +101,16 @@ object SyncEventSerializer {
                 event.state.artist?.let { stateJson.put("artist", it) }
                 event.state.thumbnailUrl?.let { stateJson.put("thumbnailUrl", it) }
                 
+                // NEW: Local Media Fingerprint
+                event.state.mediaFingerprint?.let { fp ->
+                    val fpJson = JSONObject()
+                    fpJson.put("title", fp.title)
+                    fpJson.put("durationMs", fp.durationMs)
+                    fpJson.put("sizeBytes", fp.sizeBytes)
+                    fp.mimeType?.let { fpJson.put("mimeType", it) }
+                    stateJson.put("mediaFingerprint", fpJson)
+                }
+                
                 json.put("state", stateJson)
             }
             is PingEvent -> {
@@ -105,6 +124,21 @@ object SyncEventSerializer {
                 json.put("clientTimestamp", event.clientTimestamp)
                 json.put("serverTimestamp", event.serverTimestamp)
                 json.put("serverReplyTimestamp", event.serverReplyTimestamp)
+            }
+            is ReactionEvent -> {
+                json.put("type", "REACTION")
+                json.put("emoji", event.emoji)
+                event.senderName?.let { json.put("senderName", it) }
+            }
+            is FlashMessageEvent -> {
+                json.put("type", "FLASH_MESSAGE")
+                json.put("message", event.message)
+                event.senderName?.let { json.put("senderName", it) }
+            }
+            is KineticTouchEvent -> {
+                json.put("type", "KINETIC_TOUCH")
+                json.put("x", event.x.toDouble())
+                json.put("y", event.y.toDouble())
             }
         }
         return json.toString().toByteArray(Charsets.UTF_8)
@@ -127,7 +161,15 @@ object SyncEventSerializer {
                     artist = json.optString("artist", null).takeIf { it?.isNotEmpty() == true },
                     thumbnailUrl = json.optString("thumbnailUrl", null).takeIf { it?.isNotEmpty() == true },
                     requesterName = json.optString("requesterName", null).takeIf { it?.isNotEmpty() == true },
-                    requesterAvatar = json.optString("requesterAvatar", null).takeIf { it?.isNotEmpty() == true }
+                    requesterAvatar = json.optString("requesterAvatar", null).takeIf { it?.isNotEmpty() == true },
+                    mediaFingerprint = json.optJSONObject("mediaFingerprint")?.let { fpJson ->
+                        com.github.musicyou.sync.session.MediaFingerprint(
+                            title = fpJson.getString("title"),
+                            durationMs = fpJson.getLong("durationMs"),
+                            sizeBytes = fpJson.optLong("sizeBytes", 0L),
+                            mimeType = fpJson.optString("mimeType", null).takeIf { it?.isNotEmpty() == true }
+                        )
+                    }
                 )
                 "PAUSE" -> PauseEvent(
                     pos = json.getLong("pos"),
@@ -204,7 +246,15 @@ object SyncEventSerializer {
                         connectedPeerUids = connectedUidsMap,
                         stateVersion = stateJson.optLong("stateVersion", 0L),
                         syncStatus = syncStatus,
-                        clockSyncMessage = stateJson.optString("clockSyncMessage", null).takeIf { it?.isNotEmpty() == true }
+                        clockSyncMessage = stateJson.optString("clockSyncMessage", null).takeIf { it?.isNotEmpty() == true },
+                        mediaFingerprint = stateJson.optJSONObject("mediaFingerprint")?.let { fpJson ->
+                            com.github.musicyou.sync.session.MediaFingerprint(
+                                title = fpJson.getString("title"),
+                                durationMs = fpJson.getLong("durationMs"),
+                                sizeBytes = fpJson.optLong("sizeBytes", 0L),
+                                mimeType = fpJson.optString("mimeType", null).takeIf { it?.isNotEmpty() == true }
+                            )
+                        }
                     )
                     StateSyncEvent(state, timestamp)
                 }
@@ -218,6 +268,21 @@ object SyncEventSerializer {
                     clientTimestamp = json.getLong("clientTimestamp"),
                     serverTimestamp = json.getLong("serverTimestamp"),
                     serverReplyTimestamp = json.getLong("serverReplyTimestamp"),
+                    timestamp = timestamp
+                )
+                "REACTION" -> ReactionEvent(
+                    emoji = json.getString("emoji"),
+                    timestamp = timestamp,
+                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true }
+                )
+                "FLASH_MESSAGE" -> FlashMessageEvent(
+                    message = json.getString("message"),
+                    timestamp = timestamp,
+                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true }
+                )
+                "KINETIC_TOUCH" -> KineticTouchEvent(
+                    x = json.getDouble("x").toFloat(),
+                    y = json.getDouble("y").toFloat(),
                     timestamp = timestamp
                 )
                 else -> null

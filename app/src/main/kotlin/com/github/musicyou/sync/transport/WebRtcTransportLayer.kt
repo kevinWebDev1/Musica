@@ -82,6 +82,10 @@ class WebRtcTransportLayer(
     }
 
     override suspend fun connect(sessionId: String?) {
+        connectInternal(sessionId, isReconnect = false)
+    }
+
+    private suspend fun connectInternal(sessionId: String?, isReconnect: Boolean) {
         if (isDisconnecting) {
             Log.w(TAG, "WebRTC: Ignoring connect() while disconnecting")
             return
@@ -91,7 +95,9 @@ class WebRtcTransportLayer(
         try {
             dataChannel?.close()
             peerConnection?.close()
-            signalingClient?.disconnect()
+            if (!isReconnect) {
+                signalingClient?.disconnect()
+            }
         } catch (e: Exception) {
             Log.w(TAG, "WebRTC: Error clearing previous connection: ${e.message}")
         }
@@ -104,13 +110,20 @@ class WebRtcTransportLayer(
         isRemoteDescriptionSet = false
         pendingIceCandidates.clear()
         
+        // Determine if this is host or participant based on sessionId
+        // Host: sessionId is null (will generate new code)
+        // Participant: sessionId is provided (joining existing session)
+        val isActualHost = (sessionId == null)
+        
         // Generate or use session ID
         val roomCode = sessionId ?: java.util.UUID.randomUUID().toString().take(6).uppercase()
         _sessionId.value = roomCode
-        Log.i(TAG, "WebRTC: ${if (isHost) "Hosting" else "Joining"} room $roomCode")
+        Log.i(TAG, "WebRTC: ${if (isActualHost) "Hosting" else "Joining"} room $roomCode")
         
-        // Create signaling client
-        signalingClient = FirebaseSignalingClient(isHost = isHost)
+        // Create signaling client if not reconnecting
+        if (!isReconnect || signalingClient == null) {
+            signalingClient = FirebaseSignalingClient(isHost = isActualHost)
+        }
         
         // Create peer connection with STUN servers
         val rtcConfig = PeerConnection.RTCConfiguration(
@@ -131,8 +144,10 @@ class WebRtcTransportLayer(
             return
         }
         
-        // Connect to Firebase signaling room
-        signalingClient?.createOrJoinRoom(roomCode)
+        // Connect to Firebase signaling room (only if fresh connection)
+        if (!isReconnect) {
+            signalingClient?.createOrJoinRoom(roomCode)
+        }
         
         // Listen for incoming SDP (with deduplication guard)
         signalingClient?.incomingSdp?.onEach { remoteSdp ->
@@ -150,7 +165,7 @@ class WebRtcTransportLayer(
             addIceCandidate(candidate)
         }?.launchIn(scope)
         
-        if (isHost) {
+        if (isActualHost) {
             // Host creates data channel and offer
             createDataChannel()
             createOffer()
@@ -339,7 +354,7 @@ class WebRtcTransportLayer(
                              Log.e(TAG, "WebRTC: ICE stuck in DISCONNECTED. Forcing reconnect.")
                              val currentId = _sessionId.value
                              if (currentId != null && !isDisconnecting) {
-                                 connect(currentId)
+                                 connectInternal(currentId, isReconnect = true)
                              }
                         }
                     }
@@ -351,7 +366,7 @@ class WebRtcTransportLayer(
                         _connectionState.value = TransportLayer.ConnectionState.CONNECTING
                         scope.launch {
                             delay(1000) // Brief backoff
-                            connect(currentId)
+                            connectInternal(currentId, isReconnect = true)
                         }
                     } else {
                          _connectionState.value = TransportLayer.ConnectionState.ERROR

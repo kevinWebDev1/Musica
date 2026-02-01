@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.cancel
 
 /**
  * ExoPlayer-based implementation of PlaybackEngine.
@@ -85,54 +84,36 @@ class ExoPlayerPlaybackEngine(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    override fun loadTrack(mediaId: String, seekPositionMs: Long, autoPlay: Boolean, customUri: String?) {
-        android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Resolving and Loading $mediaId, seekTo=$seekPositionMs, autoPlay=$autoPlay, customUri=$customUri")
+    override fun loadTrack(mediaId: String, seekPositionMs: Long, autoPlay: Boolean) {
+        android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Resolving and Loading $mediaId, seekTo=$seekPositionMs, autoPlay=$autoPlay")
         
         // Launch a coroutine to fetch metadata
         scope.launch {
-            var validMetadataItem: MediaItem? = null
+            var mediaItem: MediaItem? = null
             
-            // 1. Resolve Metadata (Always try to get rich metadata)
-            // Check Database first
+            // Try database first (local cache)
             val dbSong = Database.song(mediaId).firstOrNull()
             if (dbSong != null) {
-                 android.util.Log.d("metadata_info_debug", "ExoEngine: Found metadata in DB for $mediaId - ${dbSong.title}")
-                 validMetadataItem = dbSong.asMediaItem
+                android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using DB song - ${dbSong.title}")
+                mediaItem = dbSong.asMediaItem
             } else {
                 // Fallback to Innertube API
                 try {
                     val result = Innertube.song(mediaId)
                     val songItem = result?.getOrNull()
                     if (songItem != null) {
-                        android.util.Log.d("metadata_info_debug", "ExoEngine: Found metadata in Innertube for $mediaId - ${songItem.info?.name}")
-                        validMetadataItem = songItem.asMediaItem
+                        android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Using Innertube - ${songItem.info?.name}")
+                        mediaItem = songItem.asMediaItem
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("metadata_info_debug", "ExoEngine: Innertube lookup failed: ${e.message}")
+                    android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Innertube failed: ${e.message}")
                 }
             }
-
-            // 2. Construct Final MediaItem
-            val mediaItem = if (customUri != null) {
-                android.util.Log.i("metadata_info_debug", "ExoEngine: Using Custom URI override: $customUri")
-                // If we have valid metadata, use it but override the URI
-                if (validMetadataItem != null) {
-                     validMetadataItem.buildUpon()
-                         .setUri(customUri)
-                         .setMediaId(mediaId)
-                         .setCustomCacheKey(mediaId)
-                         .build()
-                } else {
-                    // No metadata found, just use basic item with URI
-                    MediaItem.Builder()
-                         .setUri(customUri)
-                         .setMediaId(mediaId)
-                         .setCustomCacheKey(mediaId)
-                         .build()
-                }
-            } else {
-                // No custom URI, use the resolved metadata item (or fallback to basic if null)
-                validMetadataItem ?: MediaItem.Builder()
+            
+            // Final fallback - basic MediaItem with just ID
+            if (mediaItem == null) {
+                android.util.Log.w("ExoPPlaybackEngine", "loadTrack: Using basic MediaItem (no metadata)")
+                mediaItem = MediaItem.Builder()
                     .setUri(mediaId)
                     .setMediaId(mediaId)
                     .setCustomCacheKey(mediaId)
@@ -141,7 +122,7 @@ class ExoPlayerPlaybackEngine(
             
             // Apply on main thread - seek and play AFTER track is set
             runOnMain {
-                player.setMediaItem(mediaItem)
+                player.setMediaItem(mediaItem!!)
                 player.prepare()
                 if (seekPositionMs > 0) {
                     android.util.Log.d("ExoPPlaybackEngine", "loadTrack: Seeking to $seekPositionMs ms")
@@ -175,19 +156,10 @@ class ExoPlayerPlaybackEngine(
         runOnMain { player.setPlaybackSpeed(speed) }
     }
 
-    override suspend fun getCurrentPosition(): Long = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-        player.currentPosition
-    }
-
     override fun release() {
         runOnMain {
             player.removeListener(playerListener)
             player.release()
-        }
-        try {
-            scope.cancel()
-        } catch (e: Exception) {
-            android.util.Log.e("ExoPPlaybackEngine", "Error cancelling scope", e)
         }
     }
 

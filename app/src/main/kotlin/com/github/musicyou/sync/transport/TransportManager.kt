@@ -1,5 +1,6 @@
 package com.github.musicyou.sync.transport
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -116,7 +117,36 @@ class TransportManager(
     }
 
     override suspend fun connect(sessionId: String?) {
-        transports.forEach { it.connect(sessionId) }
+        // SMART TRANSPORT SELECTION
+        // Internet Mode: 6-character alphanumeric codes (e.g., "124F98")
+        // Local Mode: UUID format (36 characters with hyphens, e.g., "550e8400-...")
+        
+        val selectedTransports = if (sessionId != null) {
+            when {
+                // Internet Mode: Short 6-char code
+                sessionId.length == 6 && sessionId.all { it.isLetterOrDigit() } -> {
+                    Log.i("TransportManager", "Detected INTERNET mode (6-char code: $sessionId) - using WebRTC only")
+                    transports.filter { it is WebRtcTransportLayer }
+                }
+                // Local Mode: UUID format or longer codes
+                sessionId.length >= 32 -> {
+                    Log.i("TransportManager", "Detected LOCAL mode (UUID: $sessionId) - using Nearby only")
+                    transports.filter { it is NearbyTransportLayer }
+                }
+                // Fallback: Use all transports
+                else -> {
+                    Log.w("TransportManager", "Unknown session ID format: $sessionId - using all transports")
+                    transports
+                }
+            }
+        } else {
+            // Hosting: Use all transports
+            Log.i("TransportManager", "Hosting mode - using all transports")
+            transports
+        }
+        
+        Log.d("TransportManager", "Connecting with ${selectedTransports.size} transport(s)")
+        selectedTransports.forEach { it.connect(sessionId) }
     }
 
     override suspend fun disconnect() {

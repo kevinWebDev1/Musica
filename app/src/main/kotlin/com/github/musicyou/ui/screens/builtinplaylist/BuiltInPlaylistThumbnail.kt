@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DownloadForOffline
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +36,7 @@ fun BuiltInPlaylistThumbnail(builtInPlaylist: BuiltInPlaylist) {
                 imageVector = when (builtInPlaylist) {
                     BuiltInPlaylist.Favorites -> Icons.Default.Favorite
                     BuiltInPlaylist.Offline -> Icons.Default.DownloadForOffline
+                    BuiltInPlaylist.LocalFiles -> Icons.Default.Smartphone
                 },
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,

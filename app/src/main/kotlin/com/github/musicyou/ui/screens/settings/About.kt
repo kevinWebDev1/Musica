@@ -170,7 +170,7 @@ fun About() {
 
                             FilledTonalButton(
                                 onClick = {
-                                    uriHandler.openUri("https://github.com/kevinWebDev1/Musica/releases/latest/download/musica-app.apk")
+                                    uriHandler.openUri("https://kevinwebstore.vercel.app")
                                 }
                             ) {
                                 Icon(

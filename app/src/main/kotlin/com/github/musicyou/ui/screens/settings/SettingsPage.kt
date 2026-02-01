@@ -16,15 +16,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.ExperimentalFoundationApi
 import com.github.musicyou.enums.SettingsSection
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun SettingsPage(
     section: SettingsSection,
     pop: () -> Unit
 ) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
+    if (section == SettingsSection.Advanced) {
+        AdvancedSettingsScreen(pop = pop)
+        return
+    }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -54,6 +60,7 @@ fun SettingsPage(
                 SettingsSection.Database -> DatabaseSettings()
                 SettingsSection.Other -> OtherSettings()
                 SettingsSection.About -> About()
+                SettingsSection.Advanced -> {} // Handled above
             }
         }
     }

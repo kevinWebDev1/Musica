@@ -44,6 +44,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.Cache
@@ -283,13 +284,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         // Initialize Transports
         // Initialize Transports
         val nearbyTransport = com.github.musicyou.sync.transport.NearbyTransportLayer(this)
-        
-        // Disable WebRTC and WebSocket for now to prevent native crashes (SIGSEGV in libjingle)
-        // val webRtcTransport = com.github.musicyou.sync.transport.WebRtcTransportLayer(this, object : com.github.musicyou.sync.transport.SignalingClient { ... })
-        // val webSocketTransport = com.github.musicyou.sync.transport.WebSocketTransportLayer()
+        val webRtcTransport = com.github.musicyou.sync.transport.WebRtcTransportLayer(this, isHost = false) // Will be updated when hosting
         
         transportManager = com.github.musicyou.sync.transport.TransportManager(
-            listOf(nearbyTransport) // Only use Nearby for now
+            listOf(nearbyTransport, webRtcTransport) // Use both transports - smart selection will filter based on session ID
         )
         
         // Initialize ExoPlayer (Standard init)
@@ -312,6 +310,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         // Initialize SessionManager
         // Initialize SessionManager
         sessionManager = com.github.musicyou.sync.session.SessionManager(
+            applicationContext,
             timeSyncEngine,
             playbackEngine,
             transportManager, // Inject Transport
@@ -440,7 +439,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         sessionManager.setToastHandler { message ->
             mainHandler.post {
                 currentToast?.cancel()
-                currentToast = android.widget.Toast.makeText(this@PlayerService, message, android.widget.Toast.LENGTH_SHORT)
+                currentToast = android.widget.Toast.makeText(this@PlayerService, message, android.widget.Toast.LENGTH_LONG)
                 currentToast?.show()
             }
         }
@@ -784,10 +783,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         metadataBuilder.putBitmap(MediaMetadata.METADATA_KEY_ART, bitmap)
 
         if (isAtLeastAndroid13 && player.currentMediaItemIndex == 0) {
-            metadataBuilder.putText(
-                MediaMetadata.METADATA_KEY_TITLE,
-                "${player.mediaMetadata.title} "
-            )
+            metadataBuilder
+                .putText(MediaMetadata.METADATA_KEY_TITLE, player.mediaMetadata.title)
+                .putText(MediaMetadata.METADATA_KEY_ARTIST, player.mediaMetadata.artist)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, player.duration)
         }
 
         mediaSession.setMetadata(metadataBuilder.build())
@@ -1044,10 +1043,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     private fun createCacheDataSource(): DataSource.Factory {
         return CacheDataSource.Factory().setCache(cache).apply {
             setUpstreamDataSourceFactory(
-                DefaultHttpDataSource.Factory()
+                DefaultDataSource.Factory(this@PlayerService, DefaultHttpDataSource.Factory()
                     .setConnectTimeoutMs(16000)
                     .setReadTimeoutMs(8000)
                     .setUserAgent("Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0")
+                )
             )
         }
     }
@@ -1058,6 +1058,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
         return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
             val videoId = dataSpec.key ?: error("A key must be set")
+
+            if (videoId.startsWith("content://") || videoId.startsWith("file://")) { // Local file
+                return@Factory dataSpec
+            }
 
             if (cache.isCached(videoId, dataSpec.position, chunkLength)) {
                 dataSpec
@@ -1153,7 +1157,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             )
             .build()
 
-        return RenderersFactory { handler: Handler?, _, audioListener: AudioRendererEventListener?, _, _ ->
+        return RenderersFactory { handler: Handler?, videoListener: androidx.media3.exoplayer.video.VideoRendererEventListener?, audioListener: AudioRendererEventListener?, _, _ ->
             arrayOf(
                 MediaCodecAudioRenderer(
                     this,
@@ -1161,6 +1165,14 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                     handler,
                     audioListener,
                     audioSink
+                ),
+                androidx.media3.exoplayer.video.MediaCodecVideoRenderer(
+                    this,
+                    MediaCodecSelector.DEFAULT,
+                    0,
+                    handler,
+                    videoListener,
+                    50
                 )
             )
         }
@@ -1432,8 +1444,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     private inner class SessionCallback(private val player: Player) : MediaSession.Callback() {
         override fun onPlay() = play()
         override fun onPause() {
-            if (::sessionManager.isInitialized) sessionManager.pause()
-            else player.pause()
+            if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                sessionManager.pause()
+            } else {
+                player.pause()
+            }
         }
         override fun onSkipToPrevious() {
             // Block for participants in Host-Only Mode
@@ -1458,12 +1473,18 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             runCatching(player::forceSeekToNext)
         }
         override fun onSeekTo(pos: Long) {
-            if (::sessionManager.isInitialized) sessionManager.seekTo(pos)
-            else player.seekTo(pos)
+            if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                sessionManager.seekTo(pos)
+            } else {
+                player.seekTo(pos)
+            }
         }
         override fun onStop() {
-            if (::sessionManager.isInitialized) sessionManager.pause()
-            else player.pause()
+            if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                sessionManager.pause()
+            } else {
+                player.pause()
+            }
         }
         override fun onRewind() = player.seekToDefaultPosition()
         override fun onSkipToQueueItem(id: Long) =
@@ -1484,11 +1505,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                     android.util.Log.d("NotificationAction", "PAUSE action triggered")
                     android.util.Log.d("NotificationAction", "Player state before pause: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
                     
-                    if (::sessionManager.isInitialized) {
-                        android.util.Log.d("NotificationAction", "SessionManager initialized, calling sessionManager.pause()")
+                    if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                        android.util.Log.d("NotificationAction", "SessionManager initialized & active, calling sessionManager.pause()")
                         sessionManager.pause()
                     } else {
-                        android.util.Log.d("NotificationAction", "SessionManager NOT initialized, calling player.pause()")
+                        android.util.Log.d("NotificationAction", "SessionManager inactive/null, calling player.pause()")
                         player.pause()
                     }
                     
@@ -1497,7 +1518,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 Action.play.value -> {
                     android.util.Log.d("NotificationAction", "PLAY action triggered")
                     android.util.Log.d("NotificationAction", "Player state before play: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
-                    play()
+                    
+                    if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                        sessionManager.resume()
+                    } else {
+                        play()
+                    }
                     android.util.Log.d("NotificationAction", "Player state after play: isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}")
                 }
                 Action.next.value -> {

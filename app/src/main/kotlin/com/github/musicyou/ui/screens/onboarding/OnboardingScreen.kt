@@ -1,5 +1,6 @@
 package com.github.musicyou.ui.screens.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,8 +12,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,26 +61,66 @@ fun OnboardingScreen(
     var isCheckingUsername by remember { mutableStateOf(false) }
     var isUsernameAvailable by remember { mutableStateOf(false) }
 
-    // Initial Data Fetch
+    // Initial Data Fetch with Smart Skip
     LaunchedEffect(Unit) {
-        // Try to fetch existing profile from Firestore
+        val prefs = context.preferences
+        
+        // First check local preferences
+        var savedName = prefs.getString(displayNameKey, "") ?: ""
+        var savedUsername = prefs.getString(usernameKey, "") ?: ""
+        var savedRegion = prefs.getString(contentRegionKey, "") ?: ""
+        var savedGenres = prefs.getString(favoriteGenresKey, "") ?: ""
+        
+        android.util.Log.d("OnboardingDebug", "Initial local prefs - name: '$savedName', username: '$savedUsername', region: '$savedRegion'")
+        
+        // Then try to fetch/sync from Firestore
         val found = ProfileManager.fetchUserProfile(context)
+        
+        android.util.Log.d("OnboardingDebug", "ProfileManager.fetchUserProfile returned: $found")
+        
         if (found) {
-            val prefs = context.preferences
-            name = prefs.getString(displayNameKey, "") ?: ""
-            username = prefs.getString(usernameKey, "") ?: ""
-            selectedRegion = prefs.getString(contentRegionKey, "US") ?: "US"
-            val genresStr = prefs.getString(favoriteGenresKey, "") ?: ""
-            if (genresStr.isNotBlank()) {
-                selectedGenres.clear()
-                selectedGenres.addAll(genresStr.split(","))
-            }
-            isExistingUser = username.isNotBlank()
-            isUsernameAvailable = isExistingUser
-        } else {
-            // Fallback to Google Display Name for new users
-            name = firebaseUser?.displayName ?: ""
+            // Re-read after Firestore fetch
+            savedName = prefs.getString(displayNameKey, "") ?: ""
+            savedUsername = prefs.getString(usernameKey, "") ?: ""
+            savedRegion = prefs.getString(contentRegionKey, "") ?: ""
+            savedGenres = prefs.getString(favoriteGenresKey, "") ?: ""
+            
+            android.util.Log.d("OnboardingDebug", "After Firestore fetch - name: '$savedName', username: '$savedUsername', region: '$savedRegion'")
         }
+        
+        // Smart pre-fill: Use saved name, fallback to Google only if empty
+        name = if (savedName.isNotBlank()) savedName else (firebaseUser?.displayName ?: "")
+        username = savedUsername
+        selectedRegion = if (savedRegion.isNotBlank()) savedRegion else "US"
+        if (savedGenres.isNotBlank()) {
+            selectedGenres.clear()
+            selectedGenres.addAll(savedGenres.split(","))
+        }
+        
+        isExistingUser = username.isNotBlank()
+        isUsernameAvailable = isExistingUser
+        
+        android.util.Log.d("OnboardingDebug", "Final state - name: '$name', username: '$username', isExistingUser: $isExistingUser")
+        
+        // SMART SKIP: If everything is filled, skip onboarding entirely
+        if (savedName.isNotBlank() && savedUsername.isNotBlank() && 
+            savedRegion.isNotBlank()) {
+            android.util.Log.d("OnboardingDebug", "SMART SKIP - Complete profile found, skipping onboarding")
+            // Profile is complete - skip to app
+            onComplete()
+            return@LaunchedEffect
+        }
+        
+        // SMART RESUME: Skip to first incomplete step
+        step = when {
+            savedName.isBlank() -> 1
+            savedUsername.isBlank() -> 2
+            savedRegion.isBlank() -> 3
+            else -> 4 // Go to genres (optional step)
+        }
+        
+        android.util.Log.d("OnboardingDebug", "SMART RESUME - Starting at step $step")
+        
         isLoadingInitialData = false
     }
 
@@ -95,8 +138,15 @@ fun OnboardingScreen(
             isUsernameAvailable = ProfileManager.isUsernameAvailable(username)
             isCheckingUsername = false
         } else {
+            // Reset state when username is too short
+            isCheckingUsername = false
             isUsernameAvailable = false
         }
+    }
+    
+    // System back button support
+    BackHandler(enabled = step > 1) {
+        step--
     }
 
     val regions = listOf(
@@ -164,48 +214,124 @@ fun OnboardingScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Navigation Button
+                // Enhanced Validation
                 val canGoNext = when(step) {
                     1 -> name.isNotBlank()
-                    2 -> isUsernameAvailable
+                    2 -> username.isNotBlank() && isUsernameAvailable
+                    3 -> true // Region has default
+                    4 -> selectedGenres.isNotEmpty() // At least one genre OR use skip
                     else -> true
                 }
 
-                NeumorphicIconButton(
-                    onClick = {
-                        if (step < 4) {
-                            step++
-                        } else {
-                            // FINAL STEP: Save to Firestore
+                // Navigation Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Back Button (visible after step 1)
+                    if (step > 1) {
+                        NeumorphicIconButton(
+                            onClick = { step-- },
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            size = 56.dp,
+                            iconSize = 28.dp
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.size(56.dp))
+                    }
+                    
+                    // Skip Button (only on genre step if no selection)
+                    if (step == 4 && selectedGenres.isEmpty()) {
+                        TextButton(onClick = {
+                            // Save without genres
                             scope.launch {
-                                // 1. Local Preferences first for instant UI response
+                                // Save to local preferences FIRST (always succeeds)
                                 context.preferences.edit {
                                     putString(displayNameKey, name.trim())
                                     putString(usernameKey, username.trim().lowercase())
                                     putString(contentRegionKey, selectedRegion)
-                                    putString(favoriteGenresKey, selectedGenres.joinToString(","))
+                                    putString(favoriteGenresKey, "")
                                     putBoolean(onboardedKey, true)
                                 }
                                 
-                                // 2. Firestore Sync
-                                ProfileManager.registerUserProfile(
+                                android.util.Log.d("OnboardingDebug", "Saved to local prefs, now syncing to Firestore...")
+                                
+                                // Then sync to Firestore (may fail but local data is safe)
+                                val result = ProfileManager.registerUserProfile(
                                     context = context,
                                     displayName = name.trim(),
                                     username = username.trim().lowercase(),
                                     photoUrl = firebaseUser?.photoUrl?.toString(),
                                     region = selectedRegion,
-                                    vibes = selectedGenres.toList()
+                                    vibes = emptyList()
                                 )
                                 
+                                if (result.isSuccess) {
+                                    android.util.Log.d("OnboardingDebug", "Firestore sync successful")
+                                } else {
+                                    android.util.Log.e("OnboardingDebug", "Firestore sync failed: ${result.exceptionOrNull()?.message}")
+                                }
+                                
+                                // Proceed regardless - local data is saved
                                 onComplete()
                             }
+                        }) {
+                            Text("Skip for now", color = colors.onBackground.copy(alpha = 0.6f))
                         }
-                    },
-                    icon = if (step < 4) Icons.Default.ArrowForward else Icons.Default.Check,
-                    size = 64.dp,
-                    iconSize = 32.dp,
-                    modifier = Modifier.then(if (!canGoNext) Modifier.alpha(0.5f) else Modifier)
-                )
+                    } else {
+                        Spacer(modifier = Modifier.width(100.dp))
+                    }
+                    
+                    // Next/Finish Button
+                    NeumorphicIconButton(
+                        onClick = {
+                            if (step < 4) {
+                                step++
+                            } else {
+                                // FINAL STEP: Save with genres
+                                scope.launch {
+                                    // Save to local preferences FIRST (always succeeds)
+                                    context.preferences.edit {
+                                        putString(displayNameKey, name.trim())
+                                        putString(usernameKey, username.trim().lowercase())
+                                        putString(contentRegionKey, selectedRegion)
+                                        putString(favoriteGenresKey, selectedGenres.joinToString(","))
+                                        putBoolean(onboardedKey, true)
+                                    }
+                                    
+                                    android.util.Log.d("OnboardingDebug", "Saved to local prefs: name='${name.trim()}', username='${username.trim().lowercase()}'")
+                                    android.util.Log.d("OnboardingDebug", "Now syncing to Firestore...")
+                                    
+                                    // Then sync to Firestore (may fail but local data is safe)
+                                    val result = ProfileManager.registerUserProfile(
+                                        context = context,
+                                        displayName = name.trim(),
+                                        username = username.trim().lowercase(),
+                                        photoUrl = firebaseUser?.photoUrl?.toString(),
+                                        region = selectedRegion,
+                                        vibes = selectedGenres.toList()
+                                    )
+                                    
+                                    if (result.isSuccess) {
+                                        android.util.Log.d("OnboardingDebug", "Firestore sync successful!")
+                                    } else {
+                                        android.util.Log.e("OnboardingDebug", "Firestore sync failed: ${result.exceptionOrNull()?.message}")
+                                        // Still proceed - local data is saved
+                                    }
+                                    
+                                    // Proceed regardless - local data is saved
+                                    onComplete()
+                                }
+                            }
+                        },
+                        icon = if (step < 4) Icons.Default.ArrowForward else Icons.Default.Check,
+                        size = 64.dp,
+                        iconSize = 32.dp,
+                        enabled = canGoNext,
+                        modifier = Modifier.alpha(if (canGoNext) 1f else 0.5f)
+                    )
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
@@ -330,6 +456,22 @@ fun UsernameStep(
                         singleLine = true,
                         enabled = !isExistingUser // Disable if already has one
                     )
+                }
+                
+                // Clear button
+                if (username.isNotEmpty() && !isExistingUser) {
+                    IconButton(
+                        onClick = { onUsernameChange("") },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Clear",
+                            tint = colors.onBackground.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
                 }
                 
                 if (isChecking) {

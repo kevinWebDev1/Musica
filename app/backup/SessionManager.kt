@@ -3,7 +3,6 @@ package com.github.musicyou.sync.session
 import android.util.Log
 import com.github.musicyou.sync.playback.PlaybackEngine
 import com.github.musicyou.sync.protocol.*
-import com.github.musicyou.sync.time.ClockState
 import com.github.musicyou.sync.time.TimeSyncEngine
 import com.github.musicyou.sync.transport.TransportLayer
 import com.github.musicyou.auth.ProfileManager
@@ -12,13 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -47,9 +42,9 @@ class SessionManager(
         private const val HEARTBEAT_INTERVAL_MS = 5_000L  // Send heartbeat every 5 seconds to keep connection alive
         private const val SYNC_ECHO_SUPPRESS_MS = 3000L 
         private const val SYNC_LEAD_TIME_MS = 0L       // 4s lead for snapshot scheduling
-        private const val PARTICIPANT_LEAD_TIME_MS = 400L // 400ms participant lead vs host (Balance between sync tightness and lag buffer)
-        private const val DRIFT_THRESHOLD_MS = 300L      // 300ms drift threshold for snap-to-sync
-        private const val DRIFT_CHECK_INTERVAL_MS = 2000L // 2s check interval for responsive drift detection
+        private const val PARTICIPANT_LEAD_TIME_MS = 800L // 800ms participant lead vs host (Buffer against lag)
+        private const val DRIFT_THRESHOLD_MS = 2000L      // 2000ms drift threshold (Relaxed further to prevent halts)
+        private const val DRIFT_CHECK_INTERVAL_MS = 10000L // 10s check interval (Reduce halt frequency)
         private const val DEBOUNCE_MS = 300L
         
         // FIX 2: Extended snapshot lock duration to cover async ExoPlayer callbacks
@@ -69,15 +64,6 @@ class SessionManager(
 
     private val _sessionState = MutableStateFlow(SessionState())
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
-
-    // SOCIAL: Flow for real-time interactions (reactions, ripples, messages)
-    // Replay 1 ensures late-joining UI collectors (like after a rotation or binder reconnect) don't miss the latest splash.
-    private val _socialEvents = MutableSharedFlow<SyncEvent>(
-        replay = 1,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    val socialEvents: SharedFlow<SyncEvent> = _socialEvents.asSharedFlow()
 
     private var isHost = false
     private var eventBroadcaster: ((SyncEvent) -> Unit)? = null
@@ -159,20 +145,13 @@ class SessionManager(
         PresenceManager.connect()
         Log.i(TAG, "init: PresenceManager.connect() called - online presence established")
         
-        // Observe TimeSyncEngine for RTT updates
-        timeSyncEngine.clockState.onEach { clock ->
-             if (clock.rtt > 0) {
-                 _sessionState.update { it.copy(ping = clock.rtt) }
-             }
-        }.launchIn(scope)
-
         // Sync transport layer's sessionId and connectedPeers to sessionState
         transportLayer.sessionId.onEach { sessionId ->
             Log.d(TAG, "init: sessionId changed to: $sessionId")
             _sessionState.update { current ->
                 current.copy(
                     sessionId = sessionId,
-                    isHandshaking = sessionId == null && current.isHandshaking
+                    isHandshaking = sessionId == null && current.isHandshaking // Clear if ID arrives
                 )
             }
             
@@ -208,17 +187,12 @@ class SessionManager(
             // Update connected peers and sync status
             _sessionState.update { current ->
                 val previousPeerNames = current.connectedPeerNames.toMutableMap()
-                val previousPeerUids = current.connectedPeerUids.toMutableMap()
                 
                 // Add "Connecting..." placeholders for any NEW peer IDs that don't have names yet
                 peers.forEach { peerId ->
                     if (!previousPeerNames.containsKey(peerId)) {
                         Log.d(TAG, "Instant Reactivity: Adding placeholder for $peerId")
                         previousPeerNames[peerId] = "Connecting..."
-                    }
-                    // FIX: Populate UID so ParticipantRow can fetch profile logic
-                    if (!previousPeerUids.containsKey(peerId)) {
-                        previousPeerUids[peerId] = peerId
                     }
                 }
                 
@@ -237,14 +211,12 @@ class SessionManager(
                     Log.d(TAG, "Instant Reactivity: Cleaning up disconnected peer $it")
                     previousPeerNames.remove(it) 
                     previousPeerAvatars.remove(it)
-                    previousPeerUids.remove(it)
                 }
 
                 current.copy(
                     connectedPeers = peers.toSet(),
                     connectedPeerNames = previousPeerNames,
                     connectedPeerAvatars = previousPeerAvatars,
-                    connectedPeerUids = previousPeerUids,
                     // UX: Host shows READY when peers connect (via RTDB or Transport), back to WAITING if empty
                     syncStatus = if (isHost && (peers.isNotEmpty() || transportLayer.connectedPeers.value.isNotEmpty()))
                         SessionState.SyncStatus.READY
@@ -299,8 +271,6 @@ class SessionManager(
         // RESYNC FIX: Listen to TransportLayer connections for P2P-level reconnects
         var previousTransportPeerCount = 0
         transportLayer.connectedPeers.onEach { transportPeers ->
-             Log.d(TAG, "DEBUG: transportLayer.connectedPeers emitted: size=${transportPeers.size}, previous=$previousTransportPeerCount, isHost=$isHost")
-             
              if (isHost && transportPeers.size > previousTransportPeerCount && transportPeers.isNotEmpty()) {
                 Log.i(TAG, "init: Transport detected new peer connection (${transportPeers.size} peers) - calling initiateSeamlessSync")
                 
@@ -310,39 +280,7 @@ class SessionManager(
                     isFirstJoin = previousTransportPeerCount == 0
                 )
             }
-            
-            // PARTICIPANT FIX: Trigger state request when P2P connection is established (Race Condition Fix)
-            // Previously only triggered on RTDB update, which could happen before Transport was ready
-            if (!isHost && transportPeers.isNotEmpty() && previousTransportPeerCount == 0) {
-                Log.i(TAG, "init: Transport connected to Host - Sending Join+RequestState (Race Condition Fix)")
-                val userName = getCurrentUserName()
-                val userAvatar = getCurrentAvatar()
-                val finalName = userName ?: android.os.Build.MODEL
-                val myUid = ProfileManager.getCurrentUserUid()
-                
-                // 1. Send JoinEvent
-                val joinEvent = JoinEvent(name = finalName, avatar = userAvatar, uid = myUid, timestamp = timeSyncEngine.getGlobalTime())
-                eventBroadcaster?.invoke(joinEvent)
-                
-                // 2. Request State
-                val requestEvent = RequestStateEvent(
-                    timestamp = timeSyncEngine.getGlobalTime(),
-                    senderName = finalName,
-                    senderAvatar = userAvatar,
-                    senderUid = myUid
-                )
-                eventBroadcaster?.invoke(requestEvent)
-            }
             previousTransportPeerCount = transportPeers.size
-        }.launchIn(scope)
-        
-        // CORE FIX: Listen for Host UID changes from RTDB
-        // This ensures Guest always knows who the host is, even if P2P sync is partial
-        PresenceManager.currentSessionHost.onEach { hostUid ->
-             if (hostUid != null) {
-                 Log.i(TAG, "init: RTDB - Host UID updated to $hostUid")
-                 _sessionState.update { it.copy(hostUid = hostUid) }
-             }
         }.launchIn(scope)
         
         // CORE FIX: Listen for playback state changes and broadcast when host is connected
@@ -1003,7 +941,6 @@ class SessionManager(
     }
 
     fun joinSession(code: String) {
-        Log.d(TAG, "joinSession: Start joining process for code: $code")
         Log.i(TAG, "joinSession: Joining as PARTICIPANT with code=$code")
         isHost = false
         // Also set the StateFlow to keep in sync
@@ -1082,6 +1019,7 @@ class SessionManager(
     fun resume() {
         // FIX 6: Block during snapshot application
         if (isApplyingSnapshot) {
+            Log.d(TAG, "resume: BLOCKED (snapshot lock active)")
             return
         }
         
@@ -1182,6 +1120,7 @@ class SessionManager(
     fun seekTo(positionMs: Long) {
         // FIX 6: Block during snapshot application
         if (isApplyingSnapshot) {
+            Log.d(TAG, "seekTo: BLOCKED (snapshot lock active)")
             return
         }
         
@@ -1194,6 +1133,7 @@ class SessionManager(
         // Debounce rapid seeks (slider dragging)
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastSeekTime < DEBOUNCE_MS) {
+            Log.d(TAG, "seekTo: Debounced (too fast)")
             return
         }
         lastSeekTime = currentTime
@@ -1256,49 +1196,6 @@ class SessionManager(
         }
     }
 
-    // ============================================================
-    // SOCIAL INTERACTION COMMANDS
-    // ============================================================
-
-    fun sendReaction(emoji: String) {
-        val now = timeSyncEngine.getGlobalTime()
-        val event = ReactionEvent(
-            emoji = emoji,
-            timestamp = now,
-            senderName = getCurrentUserName()
-        )
-        Log.i(TAG, "sendReaction: $emoji")
-        eventBroadcaster?.invoke(event)
-        // Also emit locally
-        scope.launch { _socialEvents.emit(event) }
-    }
-
-    fun sendFlashMessage(message: String) {
-        val now = timeSyncEngine.getGlobalTime()
-        val event = FlashMessageEvent(
-            message = message,
-            timestamp = now,
-            senderName = getCurrentUserName()
-        )
-        Log.i(TAG, "sendFlashMessage: $message")
-        eventBroadcaster?.invoke(event)
-        // Also emit locally
-        scope.launch { _socialEvents.emit(event) }
-    }
-
-    fun sendKineticTouch(x: Float, y: Float) {
-        val now = timeSyncEngine.getGlobalTime()
-        val event = KineticTouchEvent(
-            x = x,
-            y = y,
-            timestamp = now
-        )
-        Log.d(TAG, "sendKineticTouch: x=$x, y=$y")
-        eventBroadcaster?.invoke(event)
-        // Also emit locally
-        scope.launch { _socialEvents.emit(event) }
-    }
-
     /**
      * Called when track changes. Broadcasts PlayEvent.
      * 
@@ -1327,8 +1224,7 @@ class SessionManager(
         
         // Check Host-Only Mode for participants
         if (!isHost && _sessionState.value.hostOnlyMode) {
-            Log.d(TAG, "onTrackChanged: Participant blocked (Host-Only Mode). Triggering snap-back resync.")
-            requestFullSync("manual-change-blocked")
+            Log.d(TAG, "onTrackChanged: Participant blocked (Host-Only Mode)")
             return
         }
         
@@ -1348,8 +1244,7 @@ class SessionManager(
             title = metadata?.first,
             artist = metadata?.second,
             thumbnailUrl = metadata?.third,
-            requesterName = getCurrentUserName(),  // Always include name (Host or Participant)
-            mediaFingerprint = _sessionState.value.mediaFingerprint  // Include fingerprint for local media matching
+            requesterName = getCurrentUserName()  // Always include name (Host or Participant)
         )
         
         if (isHost) {
@@ -1409,11 +1304,10 @@ class SessionManager(
             Log.v(TAG, "processEvent: [${event::class.simpleName}] | Peers: [${_sessionState.value.connectedPeers.size}]")
         }
         
-        // Host should process all events (Control requests from participants + RequestState/Ping/Pong)
+        // Host should process all events (Control requests from participants + RequestState/Ping)
         // EXCEPT if Host-Only Mode is active - then ignore request events from participants
         if (isHost && _sessionState.value.hostOnlyMode && 
-            event !is RequestStateEvent && event !is PingEvent && event !is JoinEvent && event !is PongEvent &&
-            event !is ReactionEvent && event !is FlashMessageEvent && event !is KineticTouchEvent) {
+            event !is RequestStateEvent && event !is PingEvent && event !is JoinEvent) {
             Log.d(TAG, "processEvent: Host ignoring participant request event due to Host-Only Mode: ${event::class.simpleName}")
             broadcastAuthoritativeState()
             return
@@ -1553,17 +1447,14 @@ class SessionManager(
                     ),
                     "PlayEvent"
                 )
-                // Aggressive Name Collection (capture name/avatar from request)
-                // This ensures we have display info even before formal handshake completes
+                // Aggressive Name Collection: Capture requester's name and avatar
                 event.requesterName?.let { name ->
                     _sessionState.update { current ->
                         val updatedNames = current.connectedPeerNames.toMutableMap()
                         val updatedAvatars = current.connectedPeerAvatars.toMutableMap()
-                        
                         val key = senderId ?: name
-                        // Only update if missing or placeholder
                         if (!updatedNames.containsKey(key) || updatedNames[key] == "Connecting...") {
-                            Log.i(TAG, "Aggressive Collection: Registering $name for key $key")
+                            Log.i(TAG, "Aggressive Collection: Registering $name for key $key from PlayEvent")
                             updatedNames[key] = name
                             updatedAvatars[key] = event.requesterAvatar
                         }
@@ -1681,9 +1572,6 @@ class SessionManager(
             }
 
             is PingEvent -> {
-                // NTP T1: Capture receive time immediately on Host's clock
-                val receiveTime = System.currentTimeMillis() 
-                
                 Log.v(TAG, "processEvent: PingEvent received - id=${event.id}")
                 
                 // GUEST VALIDATION: Check for major desync (missed events)
@@ -1716,15 +1604,13 @@ class SessionManager(
                 
                 // PHASE 2 FIX: BOTH host and participant must respond with pongs
                 // This is critical for bidirectional heartbeat validation
-                // NTP T2: Capture reply time (processing done)
-                val replyTime = System.currentTimeMillis() 
-                
+                val now = timeSyncEngine.getGlobalTime()
                 val pong = PongEvent(
                     id = event.id,
                     clientTimestamp = event.clientTimestamp,
-                    serverTimestamp = receiveTime, // T1: When we received PING
-                    serverReplyTimestamp = replyTime, // T2: When we send PONG
-                    timestamp = replyTime // Redundant helper
+                    serverTimestamp = event.timestamp,
+                    serverReplyTimestamp = now,
+                    timestamp = now
                 )
                 val role = if (isHost) "HOST" else "PARTICIPANT"
                 // Log.v(TAG, "processEvent: $role sending PongEvent for ping ${event.id}")
@@ -1747,27 +1633,6 @@ class SessionManager(
                         t2 = event.serverReplyTimestamp,
                         t3 = t3
                     )
-                } else {
-                    // HOST: Calculate RTT for UI display only (do NOT update time offset)
-                    // RTT = (t3 - t0) - (ServerProcessingTime)
-                    val t3 = System.currentTimeMillis()
-                    val serverProcessing = event.serverReplyTimestamp - event.serverTimestamp
-                    val rtt = (t3 - event.clientTimestamp) - serverProcessing
-                    
-                    if (rtt in 0..5000) { // Sanity check
-                        _sessionState.update { it.copy(ping = rtt) }
-                    }
-                }
-            }
-
-            is ReactionEvent, is FlashMessageEvent, is KineticTouchEvent -> {
-                // Emit to social flow for UI to handle
-                scope.launch { _socialEvents.emit(event) }
-                
-                // HOST RELAY
-                if (isHost) {
-                    Log.i(TAG, "processEvent: HOST relaying social event to all peers")
-                    eventBroadcaster?.invoke(event)
                 }
             }
         }
@@ -1840,20 +1705,14 @@ class SessionManager(
                     val currentIsPlaying = playbackEngine.playbackState.value.isPlaying
                     val currentStatus = if (currentIsPlaying) SessionState.Status.PLAYING else SessionState.Status.PAUSED
                     
-                    // Strict dedup: If media/status/speed match AND we are within drift threshold of the TARGET position, ignore.
+                    // Strict dedup: If media/status match AND we are within drift threshold of the TARGET position, ignore.
                     // Strict dedup: If media/status match AND we are within drift threshold of the TARGET position, ignore.
                     // FIX: Bypass dedup for DriftMonitor to ensure correction happens
-                    // FIX: Also check playback speed to prevent ignoring speed changes
-                    // FIX: Always apply status changes (play/pause) - never dedup them
-                    val currentSpeed = playbackEngine.playbackState.value.playbackSpeed
-                    val isStatusChange = state.playbackStatus != currentStatus  // Detect play/pause changes
                     if (!isDriftCorrection &&
-                        !isStatusChange &&  // Never dedup status changes (play/pause)
                         state.currentMediaId == lastAppliedMediaId &&
                         state.playbackStatus == lastAppliedStatus &&
                         state.currentMediaId == currentMediaId &&
                         state.playbackStatus == currentStatus &&
-                        state.playbackSpeed == currentSpeed &&  // Check speed to detect speed changes
                         positionDrift < DRIFT_THRESHOLD_MS && 
                         (System.currentTimeMillis() - lastAppliedTimestamp) < DEDUP_THRESHOLD_MS) {
                         Log.d("halt_debug", "applySnapshot: IGNORED (dedup/drift limits)")
@@ -1878,18 +1737,8 @@ class SessionManager(
             _sessionState.update { current ->
                 Log.d("metadata_info_debug", "applySnapshot: [GUEST] Applying state. MediaId(Inc: ${state.currentMediaId} vs Loc: ${current.currentMediaId}). Incoming Metadata: Title='${state.title}'")
                 
-                // MERGE FIX: Start with current data to prevent loss during partial updates (Play/Pause)
-                // These events result in empty/partial maps in 'state', so we must preserve 'current' data
-                val mergedNames = current.connectedPeerNames.toMutableMap()
-                val mergedAvatars = current.connectedPeerAvatars.toMutableMap()
-                val mergedUids = current.connectedPeerUids.toMutableMap()
-                
-                // Apply incoming updates (overwrites existing keys if present)
-                mergedNames.putAll(state.connectedPeerNames)
-                mergedAvatars.putAll(state.connectedPeerAvatars)
-                mergedUids.putAll(state.connectedPeerUids)
-
-                // Ensure "Me" is present
+                // Aggressive name collection logic...
+                val mergedNames = state.connectedPeerNames.toMutableMap()
                 getCurrentUserName()?.let { myName ->
                     if (myName != "Unknown" && !mergedNames.containsKey(myName)) {
                         mergedNames[myName] = myName
@@ -1913,15 +1762,10 @@ class SessionManager(
                 state.copy(
                     isHost = current.isHost,
                     sessionId = current.sessionId,
-                    // FIX: Preserve hostUid if already known (e.g. from RTDB), don't overwrite with null from partial update
-                    hostUid = if (current.isHost) current.hostUid else (state.hostUid ?: current.hostUid),
-                    connectedPeers = current.connectedPeers, // Keep IDs from current (synced via Presence)
-                    
-                    // Use MERGED maps for participants to prevent data loss
+                    hostUid = if (current.isHost) current.hostUid else state.hostUid,
+                    connectedPeers = current.connectedPeers,
                     connectedPeerNames = if (current.isHost) current.connectedPeerNames else mergedNames,
-                    connectedPeerAvatars = if (current.isHost) current.connectedPeerAvatars else mergedAvatars,
-                    connectedPeerUids = if (current.isHost) current.connectedPeerUids else mergedUids,
-                    
+                    connectedPeerUids = if (current.isHost) current.connectedPeerUids else state.connectedPeerUids,
                     title = finalTitle,
                     artist = finalArtist,
                     thumbnailUrl = finalUrl

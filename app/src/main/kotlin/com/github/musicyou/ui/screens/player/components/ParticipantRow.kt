@@ -47,14 +47,15 @@ fun ParticipantRow(
     
     // 3. Fetch profiles for any UIDs we encounter
     // NOTE: sessionState.connectedPeers now comes from RTDB via SessionManager
-    LaunchedEffect(sessionState.connectedPeers) {
-        sessionState.connectedPeers.forEach { uid ->
-            if (!profileCache.containsKey(uid)) {
+    LaunchedEffect(sessionState.connectedPeers, sessionState.connectedPeerUids) {
+        sessionState.connectedPeers.forEach { peerId ->
+            val peerUid = sessionState.connectedPeerUids[peerId]
+            if (peerUid != null && !profileCache.containsKey(peerUid)) {
                  launch {
-                     val result = ProfileManager.getPublicProfile(uid)
+                     val result = ProfileManager.getPublicProfile(peerUid)
                      result.getOrNull()?.let { profile ->
                          // Update cache with new profile
-                         profileCache = profileCache + (uid to profile)
+                         profileCache = profileCache + (peerUid to profile)
                      }
                  }
             }
@@ -64,21 +65,22 @@ fun ParticipantRow(
     // Process participant list whenever RTDB members change
     // Note: Self is now filtered in PresenceManager.observeSessionMembers
     LaunchedEffect(sessionState.connectedPeers, sessionState.hostUid, profileCache) {
-        // connectedPeers = Set<String> of Firebase UIDs from RTDB (excluding self)
-        val processed = sessionState.connectedPeers.map { uid ->
-            val dbProfile = profileCache[uid]
+    // connectedPeers = Set<String> of Peer IDs from RTDB (excluding self)
+        val processed = sessionState.connectedPeers.map { peerId ->
+            val peerUid = sessionState.connectedPeerUids[peerId]
+            val dbProfile = if (peerUid != null) profileCache[peerUid] else null
             
             ProcessedParticipant(
-                id = uid,
-                name = dbProfile?.displayName ?: "Loading...",
-                avatarUrl = dbProfile?.photoUrl,
+                id = peerId,
+                name = dbProfile?.displayName ?: sessionState.connectedPeerNames[peerId] ?: "Loading...",
+                avatarUrl = dbProfile?.photoUrl ?: sessionState.connectedPeerAvatars[peerId],
                 username = dbProfile?.username,
                 country = dbProfile?.country,  // NEW: Country for flag display
                 isSelf = false, 
-                uid = uid,
-                isHost = uid == sessionState.hostUid // Use reliable host UID check
+                uid = peerUid,
+                isHost = (peerUid != null && peerUid == sessionState.hostUid) // Use reliable host UID check
             ).also {
-                android.util.Log.d("ParticipantRow", "Processing participant: name=${it.name}, uid=$uid, hostUid=${sessionState.hostUid}, isHost=${it.isHost}")
+                // android.util.Log.d("ParticipantRow", "Processing participant: name=${it.name}, peerId=$peerId, uid=$peerUid, hostUid=${sessionState.hostUid}, isHost=${it.isHost}")
             }
         }
         participants = processed

@@ -38,6 +38,10 @@ fun PlayerScaffold(
     val scope = rememberCoroutineScope()
     val layoutDirection = LocalLayoutDirection.current
     val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState)
+    
+    // Check if we're on the FullscreenPlayer route
+    val currentRoute = navController.currentBackStackEntry?.destination?.route
+    val isOnFullscreenPlayer = currentRoute == "com.github.musicyou.ui.navigation.Routes.FullscreenPlayer"
 
     Box(
         modifier = Modifier.windowInsetsPadding(
@@ -47,70 +51,52 @@ fun PlayerScaffold(
             )
         )
     ) {
-        BottomSheetScaffold(
-            sheetContent = {
-                AnimatedContent(
-                    targetState = sheetState.targetValue,
-                    label = "player",
-                    contentKey = { value ->
-                        if (value == SheetValue.Expanded) 0 else 1
-                    }
-                ) { value ->
-                    if (value == SheetValue.Expanded) {
-                        Player(
-                            onGoToAlbum = { browseId ->
-                                scope.launch { sheetState.partialExpand() }
-                                navController.navigate(
-                                    route = Routes.Album(id = browseId)
-                                )
+        if (isOnFullscreenPlayer) {
+            // When on FullscreenPlayer, don't show the BottomSheet at all
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                content = content
+            )
+        } else {
+            BottomSheetScaffold(
+                sheetContent = {
+                    Box(
+                        modifier = Modifier.fillMaxHeight()
+                    ) {
+                        MiniPlayer(
+                            openPlayer = {
+                                navController.navigate(Routes.FullscreenPlayer)
                             },
-                            onGoToArtist = { browseId ->
-                                scope.launch { sheetState.partialExpand() }
-                                navController.navigate(
-                                    route = Routes.Artist(id = browseId)
-                                )
+                            stopPlayer = {
+                                scope.launch { sheetState.hide() }
                             }
                         )
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxHeight()
-                        ) {
-                            MiniPlayer(
-                                openPlayer = {
-                                    scope.launch { sheetState.expand() }
-                                },
-                                stopPlayer = {
-                                    scope.launch { sheetState.hide() }
-                                }
-                            )
-                        }
-
+                    }
+                },
+                scaffoldState = scaffoldState,
+                sheetPeekHeight = 76.dp + 32.dp + scaffoldPadding.calculateBottomPadding(),
+                sheetMaxWidth = Int.MAX_VALUE.dp,
+                sheetDragHandle = {
+                    Surface(
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        Box(modifier = Modifier.size(width = 32.dp, height = 4.dp))
                     }
                 }
-            },
-            scaffoldState = scaffoldState,
-            sheetPeekHeight = 76.dp + 32.dp + scaffoldPadding.calculateBottomPadding(),
-            sheetMaxWidth = Int.MAX_VALUE.dp,
-            sheetDragHandle = {
-                Surface(
-                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                ) {
-                    Box(modifier = Modifier.size(width = 32.dp, height = 4.dp))
-                }
-            }
-        ) {
-            val bottomPadding = animateDpAsState(
-                targetValue = if (sheetState.currentValue == SheetValue.Hidden) scaffoldPadding.calculateBottomPadding() else scaffoldPadding.calculateBottomPadding() + 76.dp + 32.dp,
-                label = "padding"
-            )
-
-            CompositionLocalProvider(value = LocalPlayerPadding provides bottomPadding.value) {
-                Surface(
-                    color = MaterialTheme.colorScheme.background,
-                    content = content
+            ) {
+                val bottomPadding = animateDpAsState(
+                    targetValue = if (sheetState.currentValue == SheetValue.Hidden) scaffoldPadding.calculateBottomPadding() else scaffoldPadding.calculateBottomPadding() + 76.dp + 32.dp,
+                    label = "padding"
                 )
+
+                CompositionLocalProvider(value = LocalPlayerPadding provides bottomPadding.value) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.background,
+                        content = content
+                    )
+                }
             }
         }
     }

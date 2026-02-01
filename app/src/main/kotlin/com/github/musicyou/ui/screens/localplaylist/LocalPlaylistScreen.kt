@@ -117,9 +117,7 @@ fun LocalPlaylistScreen(
                                                 }?.let(Database::insertSongPlaylistMaps)
                                         }
                                     }
-                                    scope.launch {
-                                        com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
-                                    }
+                                    com.github.musicyou.auth.SyncManager.triggerBackupPlaylist(playlistId)
                                 }
                             },
                             icon = Icons.Outlined.Sync,
@@ -183,9 +181,7 @@ fun LocalPlaylistScreen(
                         query {
                             playlist?.copy(name = text)
                                 ?.let(Database::update)
-                            scope.launch {
-                                com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
-                            }
+                            com.github.musicyou.auth.SyncManager.triggerBackupPlaylist(playlistId)
                         }
                     }
                 )
@@ -198,9 +194,7 @@ fun LocalPlaylistScreen(
                     onConfirm = {
                         query {
                             playlist?.let(Database::delete)
-                            scope.launch {
-                                com.github.musicyou.auth.SyncManager.deletePlaylistBackup(playlistId)
-                            }
+                            com.github.musicyou.auth.SyncManager.triggerDeletePlaylistBackup(playlistId)
                         }
                         pop()
                     }

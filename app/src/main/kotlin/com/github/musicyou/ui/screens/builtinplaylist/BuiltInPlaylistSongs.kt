@@ -43,7 +43,9 @@ import com.github.musicyou.utils.forcePlayAtIndex
 import com.github.musicyou.utils.forcePlayFromBeginning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 
 @ExperimentalFoundationApi
 @ExperimentalAnimationApi
@@ -91,6 +93,8 @@ fun BuiltInPlaylistSongs(
                         } ?: false
                     }.map(SongWithContentLength::song)
                 }
+
+            BuiltInPlaylist.LocalFiles -> flowOf(emptyList())
         }.collect { songs = it }
     }
 
@@ -169,6 +173,8 @@ fun BuiltInPlaylistSongs(
                                     onGoToAlbum = onGoToAlbum,
                                     onGoToArtist = onGoToArtist
                                 )
+
+                                BuiltInPlaylist.LocalFiles -> {}
                             }
                         }
                     }

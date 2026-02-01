@@ -43,6 +43,7 @@ fun BuiltInPlaylistScreen(
                         text = when (builtInPlaylist) {
                             BuiltInPlaylist.Favorites -> stringResource(id = R.string.favorites)
                             BuiltInPlaylist.Offline -> stringResource(id = R.string.offline)
+                            BuiltInPlaylist.LocalFiles -> "Device Files"
                         },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

@@ -33,6 +33,7 @@ import com.github.musicyou.ui.screens.playlist.PlaylistScreen
 import com.github.musicyou.ui.screens.search.SearchScreen
 import com.github.musicyou.ui.screens.settings.SettingsPage
 import com.github.musicyou.ui.screens.settings.SettingsScreen
+import com.github.musicyou.ui.screens.player.Player
 import com.github.musicyou.ui.screens.onboarding.OnboardingScreen
 import com.github.musicyou.ui.screens.profile.ProfileScreen
 import com.github.musicyou.utils.homeScreenTabIndexKey
@@ -42,6 +43,7 @@ import com.github.musicyou.utils.preferences
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import soup.compose.material.motion.animation.rememberSlideDistance
+import com.github.musicyou.LocalPlayerServiceBinder
 import kotlin.reflect.KClass
 
 @OptIn(
@@ -113,12 +115,6 @@ fun Navigation(
         ) {
             composable(route = route) { navBackStackEntry ->
                 content(navBackStackEntry)
-
-                BackHandler(enabled = sheetState.currentValue == SheetValue.Expanded) {
-                    scope.launch {
-                        sheetState.partialExpand()
-                    }
-                }
             }
         }
 
@@ -173,6 +169,9 @@ fun Navigation(
                 openSettings = { navController.navigate(route = Routes.Settings) },
                 onBuiltInPlaylist = { playlistIndex ->
                     navController.navigate(route = Routes.BuiltInPlaylist(index = playlistIndex))
+                },
+                onLocalFilesClick = {
+                    navController.navigate(route = Routes.LocalFiles)
                 },
                 onPlaylistClick = { playlist ->
                     navController.navigate(route = Routes.LocalPlaylist(id = playlist.id))
@@ -278,9 +277,69 @@ fun Navigation(
         }
 
         playerComposable(route = Routes.Profile::class) {
+            val binder = LocalPlayerServiceBinder.current
             ProfileScreen(
+                pop = popDestination,
+                onFriendClick = { uid ->
+                    navController.navigate(route = Routes.FriendProfile(id = uid))
+                },
+                onJoinSession = { code ->
+                    binder?.sessionManager?.joinSession(code)
+                }
+            )
+        }
+
+        playerComposable(route = Routes.FriendProfile::class) { navBackStackEntry ->
+            val route: Routes.FriendProfile = navBackStackEntry.toRoute()
+            
+            // We need to import FriendProfileScreen first, but for now assuming it exists/will exist
+            val binder = LocalPlayerServiceBinder.current
+            com.github.musicyou.ui.screens.profile.FriendProfileScreen(
+                uid = route.id,
+                pop = popDestination,
+                onJoinSession = { code ->
+                    binder?.sessionManager?.joinSession(code)
+                },
+                onPlaylistClick = { playlist ->
+                    navController.navigate(
+                        Routes.PublicPlaylist(
+                            uid = route.id,
+                            playlistId = playlist.id,
+                            playlistName = playlist.name
+                        )
+                    )
+                }
+            )
+        }
+        
+        playerComposable(route = Routes.PublicPlaylist::class) { navBackStackEntry ->
+            val route: Routes.PublicPlaylist = navBackStackEntry.toRoute()
+
+            com.github.musicyou.ui.screens.profile.PublicPlaylistScreen(
+                uid = route.uid,
+                playlistId = route.playlistId,
+                playlistName = route.playlistName,
                 pop = popDestination
             )
+        }
+
+        playerComposable(route = Routes.LocalFiles::class) {
+            com.github.musicyou.ui.screens.local.LocalFilesScreen(
+                pop = popDestination
+            )
+        }
+
+        composable<Routes.FullscreenPlayer> {
+            val context = LocalContext.current
+            Player(
+                onGoToAlbum = navigateToAlbum,
+                onGoToArtist = navigateToArtist,
+                onPop = popDestination
+            )
+
+            BackHandler {
+                popDestination()
+            }
         }
     }
 }

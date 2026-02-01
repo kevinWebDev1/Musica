@@ -26,16 +26,16 @@ android {
         applicationId = "com.github.musicyou"
         minSdk = 23
         targetSdk = 36
-        versionCode = 16
-        versionName = "2.2"
-        resConfigs("en")
+        versionCode = 30
+        versionName = "3.0.0"
+        resConfigs("en", "xxhdpi") 
     }
 
     splits {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            include("armeabi-v7a", "arm64-v8a")
             isUniversalApk = false
         }
     }
@@ -107,6 +107,7 @@ dependencies {
     implementation(libs.material.motion.compose)
     implementation(libs.media)
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
     implementation(libs.reorderable)
     implementation(libs.room)
     implementation(libs.swipe)
@@ -121,6 +122,8 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation("com.google.firebase:firebase-database-ktx")
     implementation(libs.play.services.auth)
+    implementation("com.google.firebase:firebase-functions-ktx")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     
     coreLibraryDesugaring(libs.desugaring)
 }

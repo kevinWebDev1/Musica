@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMe(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users root
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isMe(userId);
+
+      // Friends subcollection
+      match /friends/{friendId} {
+
+        // You can always read your own friends
+        allow read: if isSignedIn();
+
+        // You can write if:
+        // 1. You are modifying your own friends list
+        // OR
+        // 2. You are deleting OR adding yourself to someone else's friends list
+        allow create, update, delete: if isSignedIn() && (
+          request.auth.uid == userId        // my own document
+          || request.auth.uid == friendId  // myself in their list
+        );
+      }
+
+      // Requests subcollection
+      match /requests/{requestId} {
+        // Owner can read and write (accept/reject)
+        allow read, write: if isSignedIn() && isMe(userId);
+        
+        // Sender can READ (check status) and CREATE a request to you
+        allow read, create: if isSignedIn() && request.auth.uid == requestId;
+      }
+
+      // Presence subcollection
+      match /presence/{presenceId} {
+        allow read, write: if isSignedIn() && isMe(userId);
+      }
+
+      // Public Playlists subcollection
+      match /public_playlists/{playlistId} {
+        allow read: if isSignedIn() && (
+            isMe(userId) ||
+            get(/databases/$(database)/documents/users/$(userId)).data.privacy.sharePlaylists != false
+        );
+        allow write: if isSignedIn() && isMe(userId);
+
+        match /songs/{songId} {
+          allow read: if isSignedIn() && (
+            isMe(userId) ||
+            get(/databases/$(database)/documents/users/$(userId)).data.privacy.sharePlaylists != false
+          );
+          allow write: if isSignedIn() && isMe(userId);
+        }
+      }
+    }
+
+    // Usernames
+    match /usernames/{username} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // User Data Backup Access
+    match /userData/{userId} {
+        match /favorites/all {
+          allow read: if isSignedIn() && (
+            isMe(userId) || 
+            get(/databases/$(database)/documents/users/$(userId)).data.privacy.shareLikedSongs == true
+          );
+          allow write: if isSignedIn() && isMe(userId);
+        }
+
+        match /playlists/{playlistId} {
+            allow read, write: if isSignedIn() && isMe(userId);
+        }
+
+        match /history/all {
+             allow read, write: if isSignedIn() && isMe(userId);
+        }
+    }
+
+    // Sync Rooms for WebRTC P2P Signaling
+    match /sync_rooms/{roomId} {
+      // Anyone authenticated can read rooms (needed for P2P connection)
+      allow read: if isSignedIn();
+      
+      // Anyone can create a room (host creates on start session)
+      allow create: if isSignedIn();
+      
+      // Host can update and delete their room
+      // Participant can update to mark as joined
+      allow update, delete: if isSignedIn();
+      
+      // Allow subcollections for ICE candidates
+      match /hostIce/{candidateId} {
+        allow read, write: if isSignedIn();
+      }
+      
+      match /participantIce/{candidateId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+  }
+}

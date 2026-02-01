@@ -30,9 +30,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.catch
 import android.widget.Toast
 import com.github.musicyou.auth.ProfileManager
 import com.github.musicyou.auth.FriendPresence
+import com.github.musicyou.LocalPlayerPadding
 import androidx.compose.runtime.collectAsState
 import android.content.ClipboardManager
 import android.content.ClipData
@@ -88,7 +90,9 @@ data class FriendUiModel(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
-    pop: () -> Unit
+    pop: () -> Unit,
+    onFriendClick: (String) -> Unit = {},
+    onJoinSession: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val colors = rememberNeumorphicColors()
@@ -117,8 +121,7 @@ fun ProfileScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     
     // Observe real-time friend presence
-    val friendsPresence by ProfileManager.observeFriendsPresence()
-        .collectAsState(initial = emptyList())
+
     
     // Function to refresh all data
     fun refreshData(onComplete: () -> Unit = {}) {
@@ -127,8 +130,7 @@ fun ProfileScreen(
             ProfileManager.getFriends().onSuccess { rawFriends ->
                 friends = rawFriends.map { data ->
                     val uid = data["uid"].toString()
-                    // Find presence for this friend
-                    val presence = friendsPresence.find { it.uid == uid }
+
                     
                     FriendUiModel(
                         uid = uid,
@@ -136,12 +138,8 @@ fun ProfileScreen(
                         username = data["username"]?.toString() ?: "unknown",
                         photoUrl = data["photoUrl"]?.toString()?.takeIf { it.isNotBlank() },
                         updatedAt = (data["updatedAt"] as? Long) ?: 0L,
-                        // Map presence status to FriendStatus (simplified)
-                        status = when (presence?.status) {
-                            "idle" -> FriendStatus.ONLINE
-                            else -> FriendStatus.OFFLINE
-                        },
-                        sessionId = presence?.sessionId
+                        status = FriendStatus.OFFLINE,
+                        sessionId = null
                     )
                 }
             }
@@ -184,7 +182,6 @@ fun ProfileScreen(
         if (friends.isNotEmpty() && friendsPresenceMap.isNotEmpty()) {
             friends = friends.map { friend ->
                 val presence = friendsPresenceMap[friend.uid]
-                val legacyPresence = friendsPresence.find { it.uid == friend.uid }
                 
                 // Derive UI status - simplified (no hosting/participating)
                 val derivedStatus = when {
@@ -202,7 +199,7 @@ fun ProfileScreen(
                 friend.copy(
                     isOnline = presence?.online ?: false,
                     status = derivedStatus,
-                    sessionId = presence?.sessionId ?: legacyPresence?.sessionId,
+                    sessionId = presence?.sessionId,
                     currentSong = presence?.currentSong  // NEW: Song info from RTDB
                 )
             }
@@ -244,6 +241,8 @@ fun ProfileScreen(
     }
     
     // "You" header model with live status
+    val playerPadding = LocalPlayerPadding.current
+    
     val myProfileUiModel = remember(displayName, username, photoUrl, lastUpdated, myPresence) {
         val finalPhotoUrl = if (photoUrl.isNotBlank() && lastUpdated > 0) "$photoUrl?ts=$lastUpdated" else photoUrl
         FriendUiModel(
@@ -317,6 +316,7 @@ fun ProfileScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 24.dp),
+                contentPadding = PaddingValues(bottom = playerPadding),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 item {
@@ -412,7 +412,8 @@ fun ProfileScreen(
                             statusLabelOverride = "[ You ]",
                             updatedAt = lastUpdated
                         ), 
-                        isSelf = true
+                        isSelf = true,
+                        mySessionId = myPresence?.sessionId
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -448,9 +449,12 @@ fun ProfileScreen(
                         
                         FriendItem(
                             friend = liveFriend,
+                            mySessionId = myPresence?.sessionId,
+                            onClick = { onFriendClick(friend.uid) },
                             onActionClick = {
                                 // No specific action needed here yet
                             },
+                            onJoinClick = onJoinSession,
                             onLongClick = {
                                 if (!friend.isJoinRequestSent) {
                                     friendToRemove = friend
@@ -462,66 +466,7 @@ fun ProfileScreen(
                     }
                 }
                 
-                // PRIVACY SETTINGS SECTION
-                item {
-                    Spacer(modifier = Modifier.height(40.dp))
-                    Text(
-                        text = "Privacy Settings",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.onBackground
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-                
-                item {
-                    var shareOnlineStatus by remember { 
-                        mutableStateOf(context.preferences.getBoolean(com.github.musicyou.utils.shareOnlineStatusKey, true))
-                    }
-                    PrivacyToggleItem(
-                        title = "Share Online Status",
-                        description = "Let friends see when you're online",
-                        checked = shareOnlineStatus,
-                        onCheckedChange = { newValue ->
-                            shareOnlineStatus = newValue
-                            context.preferences.edit().putBoolean(com.github.musicyou.utils.shareOnlineStatusKey, newValue).apply()
-                            if (!newValue) PresenceManager.updateStatus("idle", null)
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-                
-                item {
-                    var shareListeningStatus by remember { 
-                        mutableStateOf(context.preferences.getBoolean(com.github.musicyou.utils.shareListeningStatusKey, true))
-                    }
-                    PrivacyToggleItem(
-                        title = "Share Listening Activity",
-                        description = "Let friends see what you're playing",
-                        checked = shareListeningStatus,
-                        onCheckedChange = { newValue ->
-                            shareListeningStatus = newValue
-                            context.preferences.edit().putBoolean(com.github.musicyou.utils.shareListeningStatusKey, newValue).apply()
-                            if (!newValue) PresenceManager.clearCurrentSong()
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-                
-                item {
-                    var shareSessionInfo by remember { 
-                        mutableStateOf(context.preferences.getBoolean(com.github.musicyou.utils.shareSessionInfoKey, true))
-                    }
-                    PrivacyToggleItem(
-                        title = "Share Session Info",
-                        description = "Let friends join your sessions",
-                        checked = shareSessionInfo,
-                        onCheckedChange = { newValue ->
-                            shareSessionInfo = newValue
-                            context.preferences.edit().putBoolean(com.github.musicyou.utils.shareSessionInfoKey, newValue).apply()
-                        }
-                    )
-                }
+
             }
         }
     }
@@ -580,16 +525,22 @@ fun ProfileScreen(
     // END NOTIFICATIONS SHEET
 
     if (showAddFriendDialog) {
+        var addFriendError by remember { mutableStateOf<String?>(null) }
+        
         AddFriendDialog(
+            error = addFriendError,
             onDismiss = { showAddFriendDialog = false },
             onSendRequest = { friendUsername -> 
+                addFriendError = null // Clear previous error
                 scope.launch {
                     val result = ProfileManager.sendFriendRequest(friendUsername)
                     result.onSuccess {
                          Toast.makeText(context, "Request Sent to $friendUsername", Toast.LENGTH_SHORT).show()
                          showAddFriendDialog = false
                     }.onFailure { e ->
-                         Toast.makeText(context, "${e.message}", Toast.LENGTH_SHORT).show()
+                         // Map specific exceptions to user-friendly messages if needed, 
+                         // or use the clear messages from ProfileManager
+                         addFriendError = e.message ?: "Failed to send request"
                     }
                 }
             }
@@ -764,7 +715,7 @@ fun NotificationItem(name: String, username: String, photoUrl: String?, onConfir
 }
 
 @Composable
-fun AddFriendDialog(onDismiss: () -> Unit, onSendRequest: (String) -> Unit) {
+fun AddFriendDialog(error: String? = null, onDismiss: () -> Unit, onSendRequest: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     val colors = rememberNeumorphicColors()
 
@@ -772,16 +723,31 @@ fun AddFriendDialog(onDismiss: () -> Unit, onSendRequest: (String) -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("Send Friend Request") },
         text = {
-            TextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Enter username (@username)") },
-                modifier = Modifier.fillMaxWidth(),
-                colors = TextFieldDefaults.colors(
-                    focusedLabelColor = neonPurple,
-                    cursorColor = neonPurple
+            Column {
+                TextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Enter username (@username)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = TextFieldDefaults.colors(
+                        focusedLabelColor = neonPurple,
+                        cursorColor = neonPurple,
+                        errorCursorColor = MaterialTheme.colorScheme.error,
+                        errorLabelColor = MaterialTheme.colorScheme.error,
+                        errorIndicatorColor = MaterialTheme.colorScheme.error
+                    ),
+                    isError = error != null,
+                    singleLine = true
                 )
-            )
+                if (error != null) {
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = { onSendRequest(text) }) {
@@ -937,13 +903,19 @@ fun NeumorphicButton(
 fun FriendItem(
     friend: FriendUiModel,
     isSelf: Boolean = false,
+    mySessionId: String? = null,  // NEW: Current user's session ID
+    onClick: () -> Unit = {},
     onActionClick: () -> Unit = {},
+    onJoinClick: (String) -> Unit = {},
     onLongClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val colors = rememberNeumorphicColors()
     val hostGradientStart = Color(0xFFD602EE)
     val hostGradientEnd = Color(0xFFFA2C91)
+    
+    // Determine if already joined this session
+    val isAlreadyJoined = !isSelf && friend.sessionId != null && mySessionId == friend.sessionId
     
     Box(
         modifier = Modifier
@@ -953,7 +925,7 @@ fun FriendItem(
             .padding(horizontal = 16.dp)
              // Use combinedClickable for long press
             .combinedClickable(
-                onClick = {}, // No-op, visual only or navigate to profile later
+                onClick = onClick,
                 onLongClick = onLongClick
             ),
         contentAlignment = Alignment.CenterStart
@@ -1061,22 +1033,60 @@ fun FriendItem(
                 }
             }
             
-            // Copy Button (Only for Host/Participant with SessionID)
+            // Join/Joined Button + Session ID with Copy Icon
             if (!isSelf && (friend.status == FriendStatus.HOSTING || friend.status == FriendStatus.PARTICIPATING) && friend.sessionId != null) {
-                IconButton(
-                    onClick = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Session ID", friend.sessionId)
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "Copied ID", Toast.LENGTH_SHORT).show()
+                Column(horizontalAlignment = Alignment.End) {
+                    // Join/Joined Button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                if (isAlreadyJoined) {
+                                    Brush.linearGradient(listOf(Color.Gray, Color.DarkGray))
+                                } else {
+                                    Brush.linearGradient(listOf(Color(0xFFD500F9), Color(0xFFFF4081)))
+                                }
+                            )
+                            .clickable(enabled = !isAlreadyJoined) {
+                                if (!isAlreadyJoined) {
+                                    onJoinClick(friend.sessionId)
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = if (isAlreadyJoined) "Joined" else "Join",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy Session ID",
-                        tint = neonPurple,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    
+                    // Session ID with Copy Icon
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = friend.sessionId,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onBackground.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy Session ID",
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Session ID", friend.sessionId)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Session ID copied!", Toast.LENGTH_SHORT).show()
+                                },
+                            tint = colors.onBackground.copy(alpha = 0.6f)
+                        )
+                    }
                 }
             }
         }

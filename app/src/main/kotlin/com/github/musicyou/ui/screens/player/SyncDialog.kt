@@ -2,65 +2,42 @@ package com.github.musicyou.ui.screens.player
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.MediaItem
-import coil3.compose.AsyncImage
-import com.github.musicyou.R
-import com.github.musicyou.auth.ProfileManager
-import com.github.musicyou.LocalPlayerServiceBinder
-import com.github.musicyou.sync.session.SessionState
+import androidx.compose.ui.unit.sp
 import com.github.musicyou.sync.session.SessionManager
+import com.github.musicyou.sync.session.SessionState
 import com.github.musicyou.ui.screens.player.components.ParticipantRow
-import com.github.musicyou.ui.styling.purplishPink
-import com.github.musicyou.utils.DisposableListener
-import com.github.musicyou.utils.*
-import kotlinx.coroutines.launch
+import com.github.musicyou.utils.displayNameKey
+import com.github.musicyou.utils.observePreference
+import com.github.musicyou.utils.profileImageUrlKey
+import com.github.musicyou.ui.styling.rememberNeumorphicColors
 
 enum class SyncMode {
     LOCAL,      // Nearby Connections (same room)
@@ -68,7 +45,7 @@ enum class SyncMode {
 }
 
 @Composable
-fun SyncDialog(
+fun SyncSheetContent(
     sessionManager: SessionManager,
     onDismiss: () -> Unit,
     onStartSession: (isLongDistance: Boolean) -> Unit = { sessionManager.startSession() },
@@ -81,7 +58,17 @@ fun SyncDialog(
     val toastContext = LocalContext.current
     val myAvatar by observePreference(profileImageUrlKey, "")
     val myName by observePreference(displayNameKey, "You")
-    
+
+    val neumorphicColors = rememberNeumorphicColors()
+
+    // Friend Presence Logic
+    val friendsPresence by produceState(initialValue = emptyList<com.github.musicyou.auth.FriendPresence>()) {
+        com.github.musicyou.auth.ProfileManager.observeFriendsPresence().collect { value = it }
+    }
+    val hostingFriends = remember(friendsPresence) {
+        friendsPresence.filter { it.status == "hosting" && it.sessionId != null }
+    }
+
     // Show toast when participant joins
     val previousPeerCount = remember { mutableStateOf(0) }
     LaunchedEffect(sessionState.connectedPeers.size) {
@@ -94,60 +81,28 @@ fun SyncDialog(
         }
         previousPeerCount.value = sessionState.connectedPeers.size
     }
-    
-    // Get current media item from the actual player (same approach as Player.kt)
-    val binder = LocalPlayerServiceBinder.current
-    var currentMediaItem by remember { mutableStateOf<MediaItem?>(binder?.player?.currentMediaItem) }
-    
-    // Listen to player media item and metadata changes
-    binder?.player?.DisposableListener {
-        object : androidx.media3.common.Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                currentMediaItem = mediaItem
-                android.util.Log.d("MusicSync", "SyncDialog: Media changed to ${mediaItem?.mediaMetadata?.title}")
-            }
-            
-            override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
-                // Metadata becomes available after track is loaded - update the item
-                currentMediaItem = binder.player.currentMediaItem
-                android.util.Log.d("MusicSync", "SyncDialog: Metadata updated - title=${mediaMetadata.title}, artist=${mediaMetadata.artist}")
-            }
-        }
-    }
-    
-    // Extract metadata from the actual player's current media item
-    val displayTitle = currentMediaItem?.mediaMetadata?.title?.toString()
-    val displayArtist = currentMediaItem?.mediaMetadata?.artist?.toString()
-    val displayThumbnail = currentMediaItem?.mediaMetadata?.artworkUri?.toString()
-
 
     // Permissions Logic
-    val context = androidx.compose.ui.platform.LocalContext.current
-    // State to hold the pending action user wanted to perform (Host/Join)
+    val context = LocalContext.current
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+        contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissionsResult ->
-        // Check if all required permissions are granted
         val allGranted = permissionsResult.all { it.value }
         if (allGranted) {
            pendingAction?.invoke()
            pendingAction = null
         } else {
-           // Maybe show a snackbar or alert? For now just reset.
            pendingAction = null
         }
     }
 
     val checkPermissionsAndExecute = { action: () -> Unit ->
-        // For Long Distance mode (WebRTC), we don't need location/bluetooth permissions
         if (syncMode == SyncMode.INTERNET) {
             action()
         } else {
             val permissions = mutableListOf<String>()
-            
-            // Location is always required for Nearby (prior to S, or associated with scanning)
             permissions.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             permissions.add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
 
@@ -166,16 +121,12 @@ fun SyncDialog(
             }
 
             if (missing.isEmpty()) {
-                // Also check if Location Services are enabled (GPS)
                 val locationManager = context.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager
                 val isGpsEnabled = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
                 val isNetworkEnabled = locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
                 
                 if (!isGpsEnabled && !isNetworkEnabled) {
-                    // Show toast or alert to enable GPS
                     android.widget.Toast.makeText(context, "Please enable Location/GPS for Nearby Sync", android.widget.Toast.LENGTH_LONG).show()
-                    // Optionally open settings:
-                    // context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                 } else {
                     action()
                 }
@@ -186,28 +137,50 @@ fun SyncDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(R.string.sync_session)) },
-        text = {
-            Column(
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (sessionState.sessionId != null || sessionState.isHandshaking) {
+            // --- ACTIVE SESSION VIEW ---
+            Text(
+                text = if (sessionState.isHost) "Hosting Session" else "Connected to Session",
+                style = MaterialTheme.typography.titleLarge,
+                color = neumorphicColors.onBackground
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Session Code Card
+            Card(
+                colors = CardDefaults.cardColors(containerColor = neumorphicColors.background),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                    .border(1.dp, neumorphicColors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
             ) {
-                if (sessionState.sessionId != null || sessionState.isHandshaking) {
-                    // Active Session OR Handshaking (Starting/Joining)
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "SESSION CODE",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = neumorphicColors.onBackground.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = if (sessionState.sessionId != null) 
-                                stringResource(R.string.session_id_label, sessionState.sessionId!!)
-                            else 
-                                "Session ID: Generating...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
+                            text = sessionState.sessionId ?: "Generating...",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = neumorphicColors.onBackground,
+                            letterSpacing = 2.sp
                         )
                         IconButton(
                             onClick = {
@@ -217,278 +190,380 @@ fun SyncDialog(
                                 android.widget.Toast.makeText(context, "Copied!", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy session code",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                            Icon(Icons.Filled.ContentCopy, "Copy", tint = MaterialTheme.colorScheme.primary)
                         }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(R.string.connected_peers, sessionState.connectedPeers.size),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    
-                    // Sync Status Indicator
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        // Status icon
-                        Text(
-                            text = when (sessionState.syncStatus) {
-                                SessionState.SyncStatus.WAITING -> "🔴"
-                                SessionState.SyncStatus.SYNCING -> "🟡"
-                                SessionState.SyncStatus.READY -> "🟢"
-                                SessionState.SyncStatus.ERROR -> "❌"
-                            },
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Status message
-                        Text(
-                            text = sessionState.clockSyncMessage ?: when (sessionState.syncStatus) {
-                                SessionState.SyncStatus.WAITING -> "Waiting..."
-                                SessionState.SyncStatus.SYNCING -> "Syncing clocks..."
-                                SessionState.SyncStatus.READY -> "Ready to sync!"
-                                SessionState.SyncStatus.ERROR -> "Error"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when (sessionState.syncStatus) {
-                                SessionState.SyncStatus.WAITING -> MaterialTheme.colorScheme.error
-                                SessionState.SyncStatus.SYNCING -> MaterialTheme.colorScheme.tertiary
-                                SessionState.SyncStatus.READY -> MaterialTheme.colorScheme.primary
-                                SessionState.SyncStatus.ERROR -> MaterialTheme.colorScheme.error
+                        
+                        IconButton(
+                            onClick = {
+                                val sendIntent = android.content.Intent().apply {
+                                    action = android.content.Intent.ACTION_SEND
+                                    putExtra(android.content.Intent.EXTRA_TEXT, "Join my MusicYou session! musicyou://sync/join?code=${sessionState.sessionId}")
+                                    type = "text/plain"
+                                }
+                                val shareIntent = android.content.Intent.createChooser(sendIntent, "Share Session Link")
+                                context.startActivity(shareIntent)
                             }
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Now Playing Card with metadata
-                    if (sessionState.currentMediaId != null) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
                         ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (displayThumbnail != null) {
-                                    AsyncImage(
-                                        model = displayThumbnail,
-                                        contentDescription = "Album Art",
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .clip(RoundedCornerShape(8.dp)),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                } else {
-                                    // Placeholder icon if no thumbnail
-                                    Box(
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .background(
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                                RoundedCornerShape(8.dp)
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("🎵", style = MaterialTheme.typography.headlineMedium)
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                }
-                                
-                                // Title and Artist - from local database or Innertube
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = displayTitle ?: sessionState.currentMediaId ?: "Unknown",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (displayArtist != null) {
-                                        Text(
-                                            text = displayArtist,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                                
-                                // Status indicator
-                                Text(
-                                    text = if (sessionState.playbackStatus == SessionState.Status.PLAYING) "▶️" else "⏸️",
-                                    style = MaterialTheme.typography.titleLarge
-                                )
+                            Icon(Icons.Filled.Share, "Share", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Sync Status Indicator
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Status icon
+                val (statusIcon, statusColor) = when (sessionState.syncStatus) {
+                    SessionState.SyncStatus.WAITING -> Icons.Filled.FiberManualRecord to MaterialTheme.colorScheme.error
+                    SessionState.SyncStatus.SYNCING -> Icons.Filled.FiberManualRecord to MaterialTheme.colorScheme.tertiary
+                    SessionState.SyncStatus.READY -> Icons.Filled.CheckCircle to MaterialTheme.colorScheme.primary
+                    SessionState.SyncStatus.ERROR -> Icons.Filled.Error to MaterialTheme.colorScheme.error
+                }
+                
+                Icon(
+                    imageVector = statusIcon,
+                    contentDescription = null,
+                    tint = statusColor,
+                    modifier = Modifier.size(12.dp)
+                )
+                
+                Spacer(modifier = Modifier.width(8.dp))
+                // Status message
+                Text(
+                    text = sessionState.clockSyncMessage ?: when (sessionState.syncStatus) {
+                        SessionState.SyncStatus.WAITING -> "Waiting..."
+                        SessionState.SyncStatus.SYNCING -> "Syncing clocks..."
+                        SessionState.SyncStatus.READY -> "Ready to sync!"
+                        SessionState.SyncStatus.ERROR -> "Error"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = statusColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Participants
+
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            ParticipantRow(
+                sessionState = sessionState,
+                myAvatar = myAvatar,
+                myName = myName
+            )
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Host Only Toggle (Host View)
+            if (sessionState.isHost) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(neumorphicColors.onBackground.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Host-Only Mode",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                        color = neumorphicColors.onBackground
+                    )
+                    Switch(
+                        checked = sessionState.hostOnlyMode,
+                        onCheckedChange = { sessionManager.setHostOnlyMode(it) }
+                    )
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
+            // Stop/Disconnect Button
+            Button(
+                onClick = {
+                    sessionManager.stopSession()
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(28.dp)
+            ) {
+                Text(if (sessionState.isHost) "End Session" else "Leave Session")
+            }
+
+        } else {
+            // --- START LISTENING PARTY VIEW ---
+            Box(
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(4.dp)
+                    .background(neumorphicColors.onBackground.copy(alpha = 0.2f), RoundedCornerShape(2.dp))
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Active Friends List
+            ActiveFriendsList(
+                hostingFriends = hostingFriends,
+                onJoin = { code ->
+                    checkPermissionsAndExecute {
+                        onJoinSession(code, syncMode == SyncMode.INTERNET)
+                    }
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Text(
+                text = "Start a Listening Party",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = neumorphicColors.onBackground
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Mode Selection Cards
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Local Card
+                SyncModeCard(
+                    title = "Local Network",
+                    subheading = "Sync with nearby devices on same Wi-Fi",
+                    icon = Icons.Filled.SwapHoriz,
+                    isSelected = syncMode == SyncMode.LOCAL,
+                    onClick = { syncMode = SyncMode.LOCAL },
+                    modifier = Modifier.weight(1f)
+                )
+                
+                // Internet Card
+                SyncModeCard(
+                    title = "Internet",
+                    subheading = "Sync with anyone, anywhere",
+                    icon = Icons.Filled.Public,
+                    isSelected = syncMode == SyncMode.INTERNET,
+                    onClick = { syncMode = SyncMode.INTERNET },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            if (isJoining) {
+                 OutlinedTextField(
+                    value = inputSessionCode,
+                    onValueChange = { inputSessionCode = it.uppercase() },
+                    label = { Text("Enter Session Code") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = neumorphicColors.onBackground.copy(alpha = 0.3f)
+                    )
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                
+                Button(
+                    onClick = {
+                        if (inputSessionCode.isNotBlank()) {
+                            checkPermissionsAndExecute {
+                                onJoinSession(inputSessionCode, syncMode == SyncMode.INTERNET)
                             }
                         }
-                    } else {
-                        Text(
-                            text = "No track playing",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
+                    },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    enabled = inputSessionCode.isNotBlank(),
+                    shape = RoundedCornerShape(28.dp)
+                ) {
+                    Text("Connect")
+                }
+                
+                TextButton(onClick = { isJoining = false }) {
+                    Text("Cancel", color = neumorphicColors.onBackground.copy(alpha = 0.6f))
+                }
+
+            } else {
+                // Buttons
+                Button(
+                    onClick = {
+                        checkPermissionsAndExecute {
+                            onStartSession(syncMode == SyncMode.INTERNET)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Text("Create Session")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedButton(
+                    onClick = { isJoining = true },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    border = BorderStroke(1.dp, neumorphicColors.onBackground.copy(alpha = 0.3f))
+                ) {
+                    Text("Join Session", color = neumorphicColors.onBackground)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SyncModeCard(
+    title: String,
+    subheading: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val neumorphicColors = rememberNeumorphicColors()
+    
+    val containerColor = if (isSelected) 
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) 
+    else 
+        neumorphicColors.background
+        
+    val borderStroke = if (isSelected) 
+        BorderStroke(2.dp, MaterialTheme.colorScheme.primary) 
+    else 
+        BorderStroke(1.dp, neumorphicColors.onBackground.copy(alpha = 0.1f))
+
+    Card(
+        modifier = modifier
+            .aspectRatio(1f)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        border = borderStroke
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+                tint = if (isSelected) MaterialTheme.colorScheme.primary else neumorphicColors.onBackground.copy(alpha = 0.6f)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else neumorphicColors.onBackground.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = subheading,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = neumorphicColors.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun ActiveFriendsList(
+    hostingFriends: List<com.github.musicyou.auth.FriendPresence>,
+    onJoin: (String) -> Unit
+) {
+    if (hostingFriends.isEmpty()) return
+    
+    val neumorphicColors = com.github.musicyou.ui.styling.rememberNeumorphicColors()
+    
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Active Friends",
+            style = MaterialTheme.typography.titleSmall,
+            color = neumorphicColors.onBackground.copy(alpha = 0.7f),
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        hostingFriends.forEach { friend ->
+            var friendName by remember(friend.uid) { mutableStateOf("Friend") }
+            var friendAvatar by remember(friend.uid) { mutableStateOf<String?>(null) }
+            
+            LaunchedEffect(friend.uid) {
+                com.github.musicyou.auth.ProfileManager.getPublicProfile(friend.uid).onSuccess { 
+                    friendName = it.displayName 
+                    friendAvatar = it.photoUrl
+                }
+            }
+            
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .background(neumorphicColors.background, RoundedCornerShape(12.dp))
+                    .border(1.dp, neumorphicColors.onBackground.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Avatar
+                // Using AsyncImage directly as AvatarImage might not exist
+                 coil3.compose.AsyncImage(
+                    model = friendAvatar ?: com.github.musicyou.R.drawable.app_icon,
+                    contentDescription = friendName,
+                    modifier = Modifier.size(40.dp)
+                        .border(2.dp, MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
+                        .clip(androidx.compose.foundation.shape.CircleShape),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (sessionState.isHost) stringResource(R.string.hosting) else stringResource(R.string.participant),
-                        style = MaterialTheme.typography.labelMedium,
+                        text = friendName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = neumorphicColors.onBackground
+                    )
+                    Text(
+                        text = "Hosting a session \uD83C\uDFA7", // Headphones emoji
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    
-                    // Host-Only Mode Toggle (Host) or Status (Participant)
-                    if (sessionState.isHost) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                             Text(
-                                 text = "Host-Only Mode (Restrict Guests)",
-                                 modifier = Modifier.weight(1f),
-                                 style = MaterialTheme.typography.bodyMedium
-                             )
-                             Switch(
-                                 checked = sessionState.hostOnlyMode,
-                                 onCheckedChange = { sessionManager.setHostOnlyMode(it) }
-                             )
-                        }
-                    } else if (sessionState.hostOnlyMode) {
-                        Row(
-                             verticalAlignment = Alignment.CenterVertically,
-                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                        ) {
-                             Icon(
-                                 imageVector = Icons.Default.Lock,
-                                 contentDescription = "Locked",
-                                 tint = MaterialTheme.colorScheme.error,
-                                 modifier = Modifier.size(20.dp)
-                             )
-                             Spacer(modifier = Modifier.width(8.dp))
-                             Text(
-                                 text = "Controls locked by Host",
-                                 style = MaterialTheme.typography.bodyMedium,
-                                 color = MaterialTheme.colorScheme.error
-                             )
-                        }
-                    }
-
-                    // Display list of connected participants
-                    // Display list of connected participants (only when session is active)
-                    if (sessionState.sessionId != null) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        ParticipantRow(
-                            sessionState = sessionState,
-                            myAvatar = myAvatar,
-                            myName = myName
-                        )
-                    }
-                } else {
-                    // No Session - Show mode selector
-                    Text(
-                        text = "Sync Mode",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = syncMode == SyncMode.LOCAL,
-                            onClick = { syncMode = SyncMode.LOCAL },
-                            label = { Text("📍 Local") }
-                        )
-                        FilterChip(
-                            selected = syncMode == SyncMode.INTERNET,
-                            onClick = { syncMode = SyncMode.INTERNET },
-                            label = { Text("🌐 Internet") }
-                        )
-                    }
-                    
-                    Text(
-                        text = if (syncMode == SyncMode.LOCAL) 
-                            "Sync with nearby devices using Bluetooth/WiFi"
-                        else 
-                            "Sync with anyone over the internet (WebRTC)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    
-                    if (isJoining) {
-                        OutlinedTextField(
-                            value = inputSessionCode,
-                            onValueChange = { inputSessionCode = it.uppercase() },
-                            label = { Text(stringResource(R.string.enter_code)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                 }
-            }
-        },
-        confirmButton = {
-            if (sessionState.sessionId != null) {
-                // Disconnect/Stop
-                TextButton(
-                    onClick = {
-                        sessionManager.stopSession()
-                        onDismiss()
-                    }
+                
+                Button(
+                    onClick = { friend.sessionId?.let { onJoin(it) } },
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                    modifier = Modifier.height(36.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text(stringResource(if (sessionState.isHost) R.string.stop_session else R.string.disconnect))
-                }
-            } else {
-                if (isJoining) {
-                    Button(
-                        onClick = {
-                            if (inputSessionCode.isNotBlank()) {
-                                checkPermissionsAndExecute {
-                                    onJoinSession(inputSessionCode, syncMode == SyncMode.INTERNET)
-                                    // Don't dismiss - let user see sync status
-                                }
-                            }
-                        },
-                        enabled = inputSessionCode.isNotBlank()
-                    ) {
-                        Text(stringResource(R.string.connect))
-                    }
-                } else {
-                    Row {
-                         TextButton(onClick = { isJoining = true }) {
-                            Text(stringResource(R.string.join_session))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(onClick = {
-                            checkPermissionsAndExecute {
-                                onStartSession(syncMode == SyncMode.INTERNET)
-                            }
-                        }) {
-                            Text(stringResource(R.string.host_session))
-                        }
-                    }
+                    Text("Join", fontSize = 12.sp)
                 }
             }
-        },
-        dismissButton = {
-             if (isJoining && sessionState.sessionId == null) {
-                 TextButton(onClick = { isJoining = false }) {
-                     Text(stringResource(R.string.cancel))
-                 }
-             } else {
-                 TextButton(onClick = onDismiss) {
-                     Text(stringResource(R.string.close))
-                 }
-             }
         }
-    )
+        Spacer(modifier = Modifier.height(16.dp))
+    }
 }

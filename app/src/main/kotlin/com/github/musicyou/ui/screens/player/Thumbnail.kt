@@ -14,6 +14,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
+import com.github.musicyou.R
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -176,6 +179,8 @@ fun Thumbnail(
                             size = thumbnailSizePx
                         ),
                         contentDescription = null,
+                        error = painterResource(R.drawable.app_icon),
+                        fallback = painterResource(R.drawable.app_icon),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .combinedClickable(

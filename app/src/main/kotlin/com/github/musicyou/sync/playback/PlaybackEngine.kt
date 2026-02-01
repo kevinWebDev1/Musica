@@ -25,7 +25,7 @@ interface PlaybackEngine {
      * @param seekPositionMs Optional position to seek to after track loads (default 0).
      * @param autoPlay Whether to start playback automatically after loading (default false).
      */
-    fun loadTrack(mediaId: String, seekPositionMs: Long = 0, autoPlay: Boolean = false)
+    fun loadTrack(mediaId: String, seekPositionMs: Long = 0, autoPlay: Boolean = false, customUri: String? = null)
 
     /**
      * Starts playback immediately.
@@ -54,6 +54,12 @@ interface PlaybackEngine {
      * @param speed 1.0f is normal speed.
      */
     fun setPlaybackSpeed(speed: Float)
+
+    /**
+     * Gets the current playback position in milliseconds.
+     * This must return the real-time position, not a cached value.
+     */
+    suspend fun getCurrentPosition(): Long
 
     /**
      * Releases resources.

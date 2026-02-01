@@ -133,9 +133,8 @@ fun InPlaylistMediaItemMenu(
                 Database.move(playlistId, positionInPlaylist, Int.MAX_VALUE)
                 Database.delete(SongPlaylistMap(song.id, playlistId, Int.MAX_VALUE))
             }
-            scope.launch {
-                com.github.musicyou.auth.SyncManager.backupSinglePlaylist(playlistId)
-            }
+
+            com.github.musicyou.auth.SyncManager.triggerBackupPlaylist(playlistId)
         },
         modifier = modifier,
         onGoToAlbum = onGoToAlbum,
@@ -245,9 +244,7 @@ fun BaseMediaItemMenu(
                         position = position
                     )
                 )
-                scope.launch {
-                    com.github.musicyou.auth.SyncManager.backupSinglePlaylist(id)
-                }
+                com.github.musicyou.auth.SyncManager.triggerBackupPlaylist(id)
             }
         },
         onGoToAlbum = onGoToAlbum,
@@ -436,9 +433,7 @@ fun MediaItemMenu(
                                             ) == 0
                                         ) {
                                             Database.insert(mediaItem, Song::toggleLike)
-                                            scope.launch {
-                                                com.github.musicyou.auth.SyncManager.backupFavorites()
-                                            }
+                                            com.github.musicyou.auth.SyncManager.triggerBackupFavorites()
                                         }
                                     }
                                 }

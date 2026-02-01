@@ -51,7 +51,16 @@ data class SessionState(
     val isHandshaking: Boolean = false,
     
     // Clock sync status message
-    val clockSyncMessage: String? = null
+    val clockSyncMessage: String? = null,
+    
+    // NEW: Local Media Fingerprint for "Same File" matching
+    val mediaFingerprint: MediaFingerprint? = null,
+    
+    // DEBUG: URI of the locally matched file (Not synced, local only)
+    val localMatchUri: String? = null,
+    
+    // NETWORK: Current Ping/RTT in milliseconds (Local only overlay)
+    val ping: Long? = null
 ) {
     enum class Status { PLAYING, PAUSED }
     
@@ -69,4 +78,16 @@ data class SessionState(
         ERROR      // Connection lost, timeout, or critical failure
     }
 }
+
+/**
+ * Metadata fingerprint to identify a local file across devices.
+ * Matching priority: durationMs (±1s) > title (fuzzy) > sizeBytes (exact).
+ */
+@kotlinx.serialization.Serializable
+data class MediaFingerprint(
+    val title: String,
+    val durationMs: Long,
+    val sizeBytes: Long = 0,
+    val mimeType: String? = null
+)
 

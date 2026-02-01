@@ -283,7 +283,7 @@ object PresenceManager {
                 updateStatus(status, sessionId)
                 Log.d(TAG, "joinSession: Status updated to $status for session=$sessionId")
                 
-                // If host, set session metadata
+                // If host, set session metadata and configure cleanup on disconnect
                 if (isHost) {
                     sessionRef.updateChildren(
                         mapOf(
@@ -292,6 +292,16 @@ object PresenceManager {
                         )
                     ).addOnSuccessListener {
                         Log.d(TAG, "joinSession: Session metadata updated for host")
+                        
+                        // CLEANUP FIX: Auto-delete entire session when host disconnects
+                        // CRITICAL: Must be inside addOnSuccessListener so 'host' field exists when permission is evaluated
+                        sessionRef.onDisconnect().removeValue()
+                            .addOnSuccessListener {
+                                Log.i(TAG, "joinSession: Host disconnect cleanup configured - session will auto-delete")
+                            }
+                            .addOnFailureListener { e ->
+                                Log.e(TAG, "joinSession: Failed to configure host disconnect cleanup", e)
+                            }
                     }
                 }
                 
@@ -312,6 +322,8 @@ object PresenceManager {
         
         // Start observing members
         observeSessionMembers(sessionId)
+        // FIX: Start observing host
+        observeSessionHost(sessionId)
     }
     
     /**
@@ -332,6 +344,25 @@ object PresenceManager {
         sessionsRef.child(sessionId).child("members").child(uid).removeValue()
             .addOnSuccessListener {
                 Log.i(TAG, "leaveSession: Successfully left session=$sessionId")
+                
+                // CLEANUP FIX: Check if session is now empty and delete if so
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        kotlinx.coroutines.delay(500) // Small delay to ensure removal has propagated
+                        val membersSnapshot = sessionsRef.child(sessionId)
+                            .child("members").get().await()
+                        
+                        if (!membersSnapshot.exists() || membersSnapshot.childrenCount == 0L) {
+                            Log.i(TAG, "leaveSession: No members left in session=$sessionId, deleting session document")
+                            sessionsRef.child(sessionId).removeValue().await()
+                            Log.i(TAG, "leaveSession: Session $sessionId successfully deleted")
+                        } else {
+                            Log.d(TAG, "leaveSession: Session $sessionId still has ${membersSnapshot.childrenCount} member(s), keeping session")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "leaveSession: Failed to cleanup session=$sessionId", e)
+                    }
+                }
             }
             .addOnFailureListener { e ->
                 Log.e(TAG, "leaveSession: Failed to leave session=$sessionId", e)
@@ -339,6 +370,7 @@ object PresenceManager {
         
         currentSessionId = null
         _currentSessionMembers.value = emptySet()
+        _currentSessionHost.value = null // FIX: Reset host
         
         // Reset status to idle and clear sessionId
         updateStatus("idle", null)
@@ -378,6 +410,27 @@ object PresenceManager {
         })
     }
     
+    // NEW: Observe session host
+    private val _currentSessionHost = MutableStateFlow<String?>(null)
+    val currentSessionHost: StateFlow<String?> = _currentSessionHost.asStateFlow()
+
+    private fun observeSessionHost(sessionId: String) {
+        val hostRef = sessionsRef.child(sessionId).child("host")
+        Log.d(TAG, "observeSessionHost: Setting up listener for session=$sessionId")
+        
+        hostRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val hostUid = snapshot.getValue(String::class.java)
+                Log.i(TAG, "observeSessionHost: Host updated for session=$sessionId, hostUid=$hostUid")
+                _currentSessionHost.value = hostUid
+            }
+            
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "observeSessionHost: Listener cancelled for session=$sessionId", error.toException())
+            }
+        })
+    }
+    
     /**
      * Observe a specific user's presence
      * Returns Flow<Boolean> (true = online, false = offline)
@@ -405,6 +458,41 @@ object PresenceManager {
             Log.d(TAG, "observePresence: Removing listener for uid=$uid")
             userPresenceRef.removeEventListener(listener)
         }
+    }
+    
+    /**
+     * Observe full presence details for a user
+     */
+    fun observeUserPresence(uid: String): Flow<UserPresence?> = callbackFlow {
+        val userPresenceRef = presenceRef.child(uid)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val online = snapshot.child("online").getValue(Boolean::class.java) ?: false
+                val lastSeen = snapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
+                val status = snapshot.child("status").getValue(String::class.java) ?: "idle"
+                val sessionId = snapshot.child("sessionId").getValue(String::class.java)
+                
+                val songSnapshot = snapshot.child("currentSong")
+                val currentSong = if (songSnapshot.exists()) {
+                    SongInfo(
+                        id = songSnapshot.child("id").getValue(String::class.java) ?: "",
+                        title = songSnapshot.child("title").getValue(String::class.java) ?: "",
+                        artist = songSnapshot.child("artist").getValue(String::class.java) ?: "",
+                        albumArt = songSnapshot.child("albumArt").getValue(String::class.java),
+                        startedAt = songSnapshot.child("startedAt").getValue(Long::class.java) ?: 0L
+                    )
+                } else null
+                
+                trySend(UserPresence(online, lastSeen, status, sessionId, currentSong))
+            }
+            
+            override fun onCancelled(error: DatabaseError) {
+                close(error.toException())
+            }
+        }
+        
+        userPresenceRef.addValueEventListener(listener)
+        awaitClose { userPresenceRef.removeEventListener(listener) }
     }
     
     /**
