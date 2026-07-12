@@ -27,6 +27,9 @@ import com.github.musicyou.ui.screens.home.HomeAlbums
 import com.github.musicyou.ui.screens.home.HomeArtistList
 import com.github.musicyou.ui.screens.home.HomePlaylists
 import com.github.musicyou.ui.screens.home.HomeSongs
+import com.github.musicyou.ui.screens.home.HomeVideos
+import com.github.musicyou.utils.asMediaItem
+import com.github.musicyou.utils.forcePlay
 import com.github.musicyou.ui.screens.home.QuickPicks
 import com.github.musicyou.ui.screens.localplaylist.LocalPlaylistScreen
 import com.github.musicyou.ui.screens.playlist.PlaylistScreen
@@ -162,6 +165,19 @@ fun Navigation(
             )
         }
 
+        playerComposable(route = Routes.Videos::class) {
+            val binder = LocalPlayerServiceBinder.current
+            HomeVideos(
+                openSearch = { navController.navigate(route = Routes.Search) },
+                openProfile = { navController.navigate(route = Routes.Profile) },
+                openSettings = { navController.navigate(route = Routes.Settings) },
+                onVideoClick = { video -> 
+                    // Handle playing video here
+                    binder?.player?.forcePlay(video.asMediaItem)
+                }
+            )
+        }
+
         playerComposable(route = Routes.Playlists::class) {
             HomePlaylists(
                 openSearch = { navController.navigate(route = Routes.Search) },
@@ -172,6 +188,9 @@ fun Navigation(
                 },
                 onLocalFilesClick = {
                     navController.navigate(route = Routes.LocalFiles)
+                },
+                onAlbumsClick = {
+                    navController.navigate(route = Routes.Albums)
                 },
                 onPlaylistClick = { playlist ->
                     navController.navigate(route = Routes.LocalPlaylist(id = playlist.id))

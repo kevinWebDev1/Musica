@@ -12,6 +12,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.media3.common.MediaItem
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.video.videoFrameMillis
+import androidx.compose.ui.platform.LocalContext
 import com.github.innertube.Innertube
 import com.github.musicyou.models.Song
 import com.github.musicyou.ui.styling.px
@@ -68,8 +71,14 @@ fun LocalSongItem(
         thumbnail = { size ->
             Box {
                 if (thumbnailContent == null) {
+                    val context = LocalContext.current
+                    val request = coil3.request.ImageRequest.Builder(context)
+                        .data(song.thumbnailUrl?.thumbnail(size.px))
+                        .videoFrameMillis(3000)
+                        .build()
+
                     AsyncImage(
-                        model = song.thumbnailUrl?.thumbnail(size.px),
+                        model = request,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier

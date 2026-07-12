@@ -717,7 +717,25 @@ fun NotificationItem(name: String, username: String, photoUrl: String?, onConfir
 @Composable
 fun AddFriendDialog(error: String? = null, onDismiss: () -> Unit, onSendRequest: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<com.github.musicyou.auth.PublicProfile>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
     val colors = rememberNeumorphicColors()
+
+    // Debounce search
+    LaunchedEffect(text) {
+        val query = text.trim()
+        if (query.length < 2) {
+            searchResults = emptyList()
+            isSearching = false
+            return@LaunchedEffect
+        }
+        
+        isSearching = true
+        kotlinx.coroutines.delay(500) // 500ms debounce
+        val result = com.github.musicyou.auth.ProfileManager.searchUsers(query)
+        searchResults = result.getOrDefault(emptyList())
+        isSearching = false
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -727,7 +745,7 @@ fun AddFriendDialog(error: String? = null, onDismiss: () -> Unit, onSendRequest:
                 TextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("Enter username (@username)") },
+                    label = { Text("Search by username (@)") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = TextFieldDefaults.colors(
                         focusedLabelColor = neonPurple,
@@ -747,10 +765,67 @@ fun AddFriendDialog(error: String? = null, onDismiss: () -> Unit, onSendRequest:
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                     )
                 }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (isSearching) {
+                    Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator(color = neonPurple, modifier = Modifier.size(24.dp))
+                    }
+                } else if (searchResults.isNotEmpty()) {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 250.dp)) {
+                        items(searchResults) { profile ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = profile.photoUrl ?: R.drawable.app_icon,
+                                    contentDescription = "Profile",
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Gray.copy(alpha = 0.2f)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = profile.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onBackground,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "@${profile.username}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onBackground.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { onSendRequest(profile.username) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Add", color = purplishPink, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                } else if (text.trim().length >= 2) {
+                    Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                        Text("No users found", color = colors.onBackground.copy(alpha = 0.6f))
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSendRequest(text) }) {
+            TextButton(onClick = { if (text.isNotBlank()) onSendRequest(text) }) {
                 Text("Send", color = purplishPink)
             }
         },

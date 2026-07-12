@@ -26,8 +26,8 @@ android {
         applicationId = "com.github.musicyou"
         minSdk = 23
         targetSdk = 36
-        versionCode = 30
-        versionName = "3.0.0"
+        versionCode = 31
+        versionName = "3.1.0"
         resConfigs("en", "xxhdpi") 
     }
 
@@ -96,6 +96,7 @@ dependencies {
     implementation(libs.compose.activity)
     implementation(libs.coil.compose)
     implementation(libs.coil.network)
+    implementation(libs.coil.video)
     implementation(libs.compose.material.icons)
     implementation(libs.compose.material3)
     implementation(libs.compose.navigation)
@@ -108,9 +109,11 @@ dependencies {
     implementation(libs.media)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.nextlib.media3ext)
     implementation(libs.reorderable)
     implementation(libs.room)
     implementation(libs.swipe)
+    implementation(libs.ui)
     ksp(libs.room.compiler)
     implementation(projects.github)
     implementation(projects.innertube)
@@ -124,6 +127,7 @@ dependencies {
     implementation(libs.play.services.auth)
     implementation("com.google.firebase:firebase-functions-ktx")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0")
     
     coreLibraryDesugaring(libs.desugaring)
 }

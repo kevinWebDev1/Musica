@@ -28,6 +28,14 @@ interface PlaybackEngine {
     fun loadTrack(mediaId: String, seekPositionMs: Long = 0, autoPlay: Boolean = false, customUri: String? = null)
 
     /**
+     * Loads a track by its MediaItem.
+     * @param mediaItem The MediaItem to load.
+     * @param seekPositionMs Optional position to seek to after track loads (default 0).
+     * @param autoPlay Whether to start playback automatically after loading (default false).
+     */
+    fun loadMediaItem(mediaItem: androidx.media3.common.MediaItem, seekPositionMs: Long = 0, autoPlay: Boolean = false)
+
+    /**
      * Starts playback immediately.
      */
     fun play()

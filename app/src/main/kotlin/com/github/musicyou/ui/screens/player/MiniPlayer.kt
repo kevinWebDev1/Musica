@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -25,6 +28,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
@@ -64,30 +68,21 @@ fun MiniPlayer(
     binder?.player ?: return
 
     var miniplayerGesturesEnabled by rememberPreference(miniplayerGesturesEnabledKey, true)
-    var shouldBePlaying by remember { mutableStateOf(binder.player.shouldBePlaying) }
+    val hybridPlaybackState by binder.hybridPlaybackEngine.playbackState.collectAsState()
 
-    var nullableMediaItem by remember {
-        mutableStateOf(binder.player.currentMediaItem, neverEqualPolicy())
-    }
-
-    binder.player.DisposableListener {
-        object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                nullableMediaItem = mediaItem
-            }
-
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                shouldBePlaying = binder.player.shouldBePlaying
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                shouldBePlaying = binder.player.shouldBePlaying
-            }
-        }
-    }
+    val nullableMediaItem = hybridPlaybackState.mediaItem ?: binder.player.currentMediaItem
+    val shouldBePlaying = hybridPlaybackState.isPlaying
+    val isYouTube = nullableMediaItem?.mediaId?.startsWith("youtube-embed:") == true
 
     val mediaItem = nullableMediaItem ?: return
-    val positionAndDuration by binder.player.positionAndDurationState()
+    
+    val exoPositionAndDuration by binder.player.positionAndDurationState()
+    
+    val positionAndDuration = if (isYouTube) {
+        Pair(hybridPlaybackState.currentPositionMs, hybridPlaybackState.durationMs ?: 0L)
+    } else {
+        exoPositionAndDuration
+    }
 
     val miniPlayerContent: @Composable BoxScope.() -> Unit = @Composable {
         Column(modifier = Modifier.clickable(onClick = openPlayer)) {
@@ -107,19 +102,37 @@ fun MiniPlayer(
                     )
                 },
                 leadingContent = {
-                    AsyncImage(
-                        model = mediaItem.mediaMetadata.artworkUri.thumbnail(Dimensions.thumbnails.song.px),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .neumorphicRaised(
-                                shadowOffset = 4.dp,
-                                shadowRadius = 6.dp,
-                                cornerRadius = 12.dp
-                            )
-                            .clip(MaterialTheme.shapes.medium)
-                            .size(52.dp)
-                    )
+                    Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        AsyncImage(
+                            model = mediaItem.mediaMetadata.artworkUri.thumbnail(Dimensions.thumbnails.song.px),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .neumorphicRaised(
+                                    shadowOffset = 4.dp,
+                                    shadowRadius = 6.dp,
+                                    cornerRadius = 12.dp
+                                )
+                                .clip(MaterialTheme.shapes.medium)
+                                .size(52.dp)
+                        )
+                        if (isYouTube) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(MaterialTheme.shapes.medium)
+                                    .background(Color.Black.copy(alpha = 0.3f)),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.OndemandVideo,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
                 },
                 trailingContent = {
                     Row {

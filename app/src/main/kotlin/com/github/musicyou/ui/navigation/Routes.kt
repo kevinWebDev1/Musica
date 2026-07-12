@@ -19,6 +19,9 @@ sealed class Routes {
     data object Playlists
 
     @Serializable
+    data object Videos
+
+    @Serializable
     data class Artist(val id: String)
 
     @Serializable

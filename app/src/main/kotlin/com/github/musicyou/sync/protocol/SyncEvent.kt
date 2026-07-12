@@ -125,7 +125,8 @@ data class PongEvent(
 data class ReactionEvent(
     val emoji: String,
     override val timestamp: Long,
-    val senderName: String? = null
+    val senderName: String? = null,
+    val eventId: String = java.util.UUID.randomUUID().toString()
 ) : SyncEvent()
 
 /**
@@ -134,7 +135,8 @@ data class ReactionEvent(
 data class FlashMessageEvent(
     val message: String,
     override val timestamp: Long,
-    val senderName: String? = null
+    val senderName: String? = null,
+    val eventId: String = java.util.UUID.randomUUID().toString()
 ) : SyncEvent()
 
 /**
@@ -144,5 +146,6 @@ data class FlashMessageEvent(
 data class KineticTouchEvent(
     val x: Float,
     val y: Float,
-    override val timestamp: Long
+    override val timestamp: Long,
+    val eventId: String = java.util.UUID.randomUUID().toString()
 ) : SyncEvent()

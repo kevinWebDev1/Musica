@@ -58,6 +58,54 @@ val Innertube.VideoItem.asMediaItem: MediaItem
         )
         .build()
 
+val Innertube.SongItem.asVideoMediaItem: MediaItem
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    get() = MediaItem.Builder()
+        .setMediaId(key)
+        .setUri(key)
+        .setCustomCacheKey(key)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(info?.name)
+                .setArtist(authors?.joinToString("") { it.name ?: "" })
+                .setAlbumTitle(album?.name)
+                .setArtworkUri(thumbnail?.url?.toUri())
+                .setExtras(
+                    bundleOf(
+                        "albumId" to album?.endpoint?.browseId,
+                        "durationText" to durationText,
+                        "artistNames" to authors?.filter { it.endpoint != null }?.mapNotNull { it.name },
+                        "artistIds" to authors?.mapNotNull { it.endpoint?.browseId },
+                        "forceVideo" to true
+                    )
+                )
+                .build()
+        )
+        .build()
+
+val Innertube.VideoItem.asVideoMediaItem: MediaItem
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    get() = MediaItem.Builder()
+        .setMediaId(key)
+        .setUri(key)
+        .setCustomCacheKey(key)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(info?.name)
+                .setArtist(authors?.joinToString("") { it.name ?: "" })
+                .setArtworkUri(thumbnail?.url?.toUri())
+                .setExtras(
+                    bundleOf(
+                        "durationText" to durationText,
+                        "artistNames" to if (isOfficialMusicVideo) authors?.filter { it.endpoint != null }?.mapNotNull { it.name } else null,
+                        "artistIds" to if (isOfficialMusicVideo) authors?.mapNotNull { it.endpoint?.browseId } else null,
+                        "forceVideo" to true
+                    )
+                )
+                .build()
+        )
+        .build()
+
 val Song.asMediaItem: MediaItem
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     get() = MediaItem.Builder()

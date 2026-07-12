@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.outlined.Album
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,7 +54,8 @@ fun HomePlaylists(
     openSettings: () -> Unit,
     onBuiltInPlaylist: (Int) -> Unit,
     onLocalFilesClick: () -> Unit,
-    onPlaylistClick: (Playlist) -> Unit
+    onPlaylistClick: (Playlist) -> Unit,
+    onAlbumsClick: () -> Unit
 ) {
     val playerPadding = LocalPlayerPadding.current
 
@@ -139,6 +141,14 @@ fun HomePlaylists(
                     icon = Icons.Default.Smartphone,
                     name = "Device Files",
                     onClick = onLocalFilesClick
+                )
+            }
+
+            item(key = "albums") {
+                BuiltInPlaylistItem(
+                    icon = Icons.Outlined.Album,
+                    name = stringResource(id = R.string.albums),
+                    onClick = onAlbumsClick
                 )
             }
 

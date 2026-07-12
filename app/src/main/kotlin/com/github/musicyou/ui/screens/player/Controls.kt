@@ -150,7 +150,9 @@ fun Controls(
                 },
                 onDragEnd = {
                     if (!isLocked) {
-                        scrubbingPosition?.let { binder.syncSeekTo(it) }
+                        scrubbingPosition?.let { pos ->
+                            binder.syncSeekTo(pos)
+                        }
                         scrubbingPosition = null
                     }
                 },

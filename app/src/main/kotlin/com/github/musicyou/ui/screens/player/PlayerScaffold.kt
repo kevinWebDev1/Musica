@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -24,6 +25,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.github.musicyou.LocalPlayerPadding
+import com.github.musicyou.LocalPlayerServiceBinder
+import com.github.musicyou.LocalYouTubePlayer
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.alpha
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.github.musicyou.ui.navigation.Routes
 import kotlinx.coroutines.launch
 
@@ -40,8 +47,9 @@ fun PlayerScaffold(
     val scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState)
     
     // Check if we're on the FullscreenPlayer route
-    val currentRoute = navController.currentBackStackEntry?.destination?.route
-    val isOnFullscreenPlayer = currentRoute == "com.github.musicyou.ui.navigation.Routes.FullscreenPlayer"
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val isOnFullscreenPlayer = currentRoute?.contains("FullscreenPlayer") == true
 
     Box(
         modifier = Modifier.windowInsetsPadding(
@@ -96,6 +104,22 @@ fun PlayerScaffold(
                         color = MaterialTheme.colorScheme.background,
                         content = content
                     )
+                }
+
+                // Keep YouTube WebView alive in background when not on FullscreenPlayer.
+                // The retained view persists at Activity level, so this just ensures
+                // the WebView stays attached to a parent ViewGroup (required for JS execution).
+                val binder = LocalPlayerServiceBinder.current
+                val youtubePlayer = LocalYouTubePlayer.current
+                val hybridState = binder?.hybridPlaybackEngine?.playbackState
+                    ?.collectAsState()?.value
+                val isYouTube = hybridState?.mediaItem?.mediaId
+                    ?.startsWith("youtube-embed:") == true
+
+                if (isYouTube && youtubePlayer != null) {
+                    Box(modifier = Modifier.size(1.dp).alpha(0.01f)) {
+                        youtubePlayer(Modifier.fillMaxSize())
+                    }
                 }
             }
         }

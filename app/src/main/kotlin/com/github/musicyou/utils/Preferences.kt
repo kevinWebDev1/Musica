@@ -40,6 +40,7 @@ const val navigationLabelsVisibilityKey = "navigationLabelsVisibility"
 const val listGesturesEnabledKey = "listGesturesEnabled"
 const val playerGesturesEnabledKey = "songGesturesEnabled"
 const val miniplayerGesturesEnabledKey = "miniplayerGesturesEnabled"
+const val autoExpandYouTubeVideoKey = "autoExpandYouTubeVideo"
 const val contentRegionKey = "contentRegion"
 const val favoriteGenresKey = "favoriteGenres"
 const val onboardedKey = "onboarded"
@@ -51,11 +52,18 @@ const val usernameKey = "username"
 const val profileImageUrlKey = "profileImageUrl"
 const val profileImageLastUpdatedKey = "profileImageLastUpdated"
 const val isProfileUpdatePendingKey = "isProfileUpdatePending"
-
+const val videoResizeModeKey = "videoResizeMode"
+const val doubleTapSeekDurationKey = "doubleTapSeekDuration"
+const val scrubSeekIntensityKey = "scrubSeekIntensity"
+const val fastForwardSpeedTopKey = "fastForwardSpeedTop"
+const val fastForwardSpeedMidKey = "fastForwardSpeedMid"
+const val fastForwardSpeedBotKey = "fastForwardSpeedBot"
 // Real-time presence privacy settings (default: true for all)
 const val shareOnlineStatusKey = "shareOnlineStatus"
 const val shareListeningStatusKey = "shareListeningStatus"
 const val shareSessionInfoKey = "shareSessionInfo"
+const val videoQualityKey = "videoQuality"
+const val defaultFullscreenOrientationKey = "defaultFullscreenOrientation"
 
 inline fun <reified T : Enum<T>> SharedPreferences.getEnum(
     key: String,
@@ -94,6 +102,16 @@ fun rememberPreference(key: String, defaultValue: Int): MutableState<Int> {
     return remember {
         mutableStatePreferenceOf(context.preferences.getInt(key, defaultValue)) {
             context.preferences.edit { putInt(key, it) }
+        }
+    }
+}
+
+@Composable
+fun rememberPreference(key: String, defaultValue: Float): MutableState<Float> {
+    val context = LocalContext.current
+    return remember {
+        mutableStatePreferenceOf(context.preferences.getFloat(key, defaultValue)) {
+            context.preferences.edit { putFloat(key, it) }
         }
     }
 }

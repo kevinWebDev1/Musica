@@ -6,11 +6,14 @@ package com.github.musicyou.sync.playback
  */
 data class PlaybackState(
     val mediaId: String? = null,
+    val mediaItem: androidx.media3.common.MediaItem? = null,
     val isPlaying: Boolean = false,
     val playbackState: Int = STATE_IDLE,
     val currentPositionMs: Long = 0L,
     val bufferedPositionMs: Long = 0L,
-    val playbackSpeed: Float = 1.0f
+    val playbackSpeed: Float = 1.0f,
+    val durationMs: Long? = null,
+    val seekRequestId: Int = 0
 ) {
     companion object {
         // Mapped from Player.STATE_*

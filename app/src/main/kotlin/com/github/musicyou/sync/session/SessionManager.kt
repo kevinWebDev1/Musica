@@ -126,11 +126,25 @@ class SessionManager(
     private var lastPauseTime: Long = 0L
     private var lastSeekTime: Long = 0L
     
+    // Rate limiting for social interactions
+    private var lastReactionTime: Long = 0L
+    private var lastFlashMessageTime: Long = 0L
+    private var lastKineticTouchTime: Long = 0L
+    
     // FIX 3: Event deduplication tracking
     private var lastAppliedMediaId: String? = null
     private var lastAppliedStatus: SessionState.Status? = null
     private var lastAppliedPosition: Long = 0L
     private var lastAppliedTimestamp: Long = 0L
+    
+    // Deduplication cache for social events to prevent echo
+    private val processedSocialEvents = java.util.Collections.newSetFromMap(
+        object : java.util.LinkedHashMap<String, Boolean>(100, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                return size > 100
+            }
+        }
+    )
     
     // FIX 4: Version control
     private var hostStateVersion: Long = 0L
@@ -358,18 +372,18 @@ class SessionManager(
                 val mediaId = state.mediaId
                 if (mediaId != null && (mediaId.startsWith("content://") || mediaId.startsWith("file://"))) {
                     // Extract fingerprint
-                     Log.d("Local_Media_Sync", "Host: Local media detected ($mediaId). Generating fingerprint...")
+                     Log.d("MusicSyncFlow", "Host: Local media detected ($mediaId). Generating fingerprint...")
                      val fingerprint = com.github.musicyou.utils.DeviceMediaManager.getFingerprintFromUri(context, mediaId)
                      
                      if (fingerprint != null) {
                          if (_sessionState.value.mediaFingerprint != fingerprint) {
-                             Log.i("Local_Media_Sync", "Host: Fingerprint generated: ${fingerprint.title} (${fingerprint.durationMs}ms)")
+                             Log.i("MusicSyncFlow", "Host: Fingerprint generated: ${fingerprint.title} (${fingerprint.durationMs}ms)")
                              _sessionState.update { it.copy(mediaFingerprint = fingerprint) }
                          } else {
-                             // Log.v("Local_Media_Sync", "Host: Fingerprint already set")
+                             // Log.v("MusicSyncFlow", "Host: Fingerprint already set")
                          }
                      } else {
-                         Log.e("Local_Media_Sync", "Host: Failed to generate fingerprint for $mediaId")
+                         Log.e("MusicSyncFlow", "Host: Failed to generate fingerprint for $mediaId")
                      }
                 } else if (_sessionState.value.mediaFingerprint != null) {
                     // Clear fingerprint if we switched to non-local media
@@ -390,14 +404,15 @@ class SessionManager(
             // HYBRID FIX: Check TransportLayer directly to maintain sync even if RTDB flickers
             val hasTransportPeers = transportLayer.connectedPeers.value.isNotEmpty()
             val hasRtdbPeers = _sessionState.value.connectedPeers.isNotEmpty()
+            val hasPeers = hasRtdbPeers || hasTransportPeers
             
-            if (isHost && (hasRtdbPeers || hasTransportPeers)) {
+            if (isHost) {
                 val now = timeSyncEngine.getGlobalTime()
                 
                 // Detect play/pause change
-                if (lastIsPlaying != null && lastIsPlaying != state.isPlaying) {
+                if (lastIsPlaying != state.isPlaying) {
                     if (state.isPlaying) {
-                        Log.i(TAG, "Auto-broadcast: Host started playing")
+                        Log.i(TAG, "Host state: resumed play")
                         val (title, artist, thumbnailUrl) = getCurrentMetadata()
                         val event = PlayEvent(
                             mediaId = state.mediaId ?: "",
@@ -410,7 +425,8 @@ class SessionManager(
                             requesterAvatar = getCurrentAvatar(),
                             mediaFingerprint = _sessionState.value.mediaFingerprint // Include fingerprint
                         )
-                        eventBroadcaster?.invoke(event)
+                        if (hasPeers) eventBroadcaster?.invoke(event)
+                        
                         _sessionState.update { current ->
                             current.copy(
                                 currentMediaId = state.mediaId,
@@ -423,14 +439,15 @@ class SessionManager(
                             )
                         }
                     } else {
-                        Log.i(TAG, "Auto-broadcast: Host paused")
+                        Log.i(TAG, "Host state: paused")
                         val event = PauseEvent(
                             pos = state.currentPositionMs,
                             timestamp = now,
                             requesterName = getCurrentUserName(),
                             requesterAvatar = getCurrentAvatar()
                         )
-                        eventBroadcaster?.invoke(event)
+                        if (hasPeers) eventBroadcaster?.invoke(event)
+                        
                         _sessionState.update { current ->
                             current.copy(
                                 playbackStatus = SessionState.Status.PAUSED,
@@ -441,8 +458,8 @@ class SessionManager(
                 }
                 
                 // Detect track change - broadcast as PlayEvent to sync the new track
-                if (lastMediaId != null && lastMediaId != state.mediaId && state.mediaId != null) {
-                    Log.i(TAG, "Auto-broadcast: Host changed track to ${state.mediaId}")
+                if (lastMediaId != state.mediaId && state.mediaId != null) {
+                    Log.i(TAG, "Host state: changed track to ${state.mediaId}")
                     val (title, artist, thumbnailUrl) = getCurrentMetadata()
                     val event = PlayEvent(
                         mediaId = state.mediaId,
@@ -455,7 +472,8 @@ class SessionManager(
                         requesterAvatar = getCurrentAvatar(),
                         mediaFingerprint = _sessionState.value.mediaFingerprint // Include fingerprint
                     )
-                    eventBroadcaster?.invoke(event)
+                    if (hasPeers) eventBroadcaster?.invoke(event)
+                    
                     _sessionState.update { current ->
                         current.copy(
                             currentMediaId = state.mediaId,
@@ -470,14 +488,15 @@ class SessionManager(
                 // Detect significant seek (more than 2 seconds difference)
                 val positionDiff = kotlin.math.abs(state.currentPositionMs - lastPosition)
                 if (!isSeeking && lastIsPlaying == state.isPlaying && positionDiff > 2000) {
-                    Log.i(TAG, "Auto-broadcast: Host seeked to ${state.currentPositionMs}")
+                    Log.i(TAG, "Host state: seeked to ${state.currentPositionMs}")
                     val event = SeekEvent(
                         pos = state.currentPositionMs,
                         timestamp = now,
                         requesterName = getCurrentUserName(),
                         requesterAvatar = getCurrentAvatar()
                     )
-                    eventBroadcaster?.invoke(event)
+                    if (hasPeers) eventBroadcaster?.invoke(event)
+                    
                     _sessionState.update { current ->
                         current.copy(
                             positionAtAnchor = state.currentPositionMs,
@@ -488,7 +507,7 @@ class SessionManager(
 
                 // Detect speed change
                 if (lastPlaybackSpeed != state.playbackSpeed) {
-                    Log.i(TAG, "Auto-broadcast: Host changed speed to ${state.playbackSpeed}x")
+                    Log.i(TAG, "Host state: changed speed to ${state.playbackSpeed}x")
                     val (title, artist, thumbnailUrl) = getCurrentMetadata()
                     // Re-broadcast as PlayEvent with new speed (effectively a "Play at X speed" command)
                     val event = PlayEvent(
@@ -503,7 +522,8 @@ class SessionManager(
                         mediaFingerprint = _sessionState.value.mediaFingerprint,
                         playbackSpeed = state.playbackSpeed
                     )
-                    eventBroadcaster?.invoke(event)
+                    if (hasPeers) eventBroadcaster?.invoke(event)
+                    
                     _sessionState.update { current ->
                         current.copy(
                             playbackSpeed = state.playbackSpeed,
@@ -871,7 +891,7 @@ class SessionManager(
         
         // Get current metadata
         val (title, artist, thumbnailUrl) = getCurrentMetadata()
-        Log.d("metadata_info_debug", "initiateSeamlessSync: [HOST] Retrieved initial metadata: Title='$title', Artist='$artist', Art='$thumbnailUrl'")
+        Log.d("MusicSyncFlow", "initiateSeamlessSync: [HOST] Retrieved initial metadata: Title='$title', Artist='$artist', Art='$thumbnailUrl'")
         
         // Update state with scheduled sync info
         _sessionState.update { current ->
@@ -1003,6 +1023,7 @@ class SessionManager(
     }
 
     fun joinSession(code: String) {
+        android.util.Log.d("ytSync", "SessionManager: Friend is joining session with code=$code")
         Log.d(TAG, "joinSession: Start joining process for code: $code")
         Log.i(TAG, "joinSession: Joining as PARTICIPANT with code=$code")
         isHost = false
@@ -1261,12 +1282,20 @@ class SessionManager(
     // ============================================================
 
     fun sendReaction(emoji: String) {
+        val localNow = System.currentTimeMillis()
+        if (localNow - lastReactionTime < 150) {
+            Log.d(TAG, "sendReaction: Rate limited (spam protection)")
+            return
+        }
+        lastReactionTime = localNow
+
         val now = timeSyncEngine.getGlobalTime()
         val event = ReactionEvent(
             emoji = emoji,
             timestamp = now,
             senderName = getCurrentUserName()
         )
+        processedSocialEvents.add(event.eventId)
         Log.i(TAG, "sendReaction: $emoji")
         eventBroadcaster?.invoke(event)
         // Also emit locally
@@ -1274,12 +1303,20 @@ class SessionManager(
     }
 
     fun sendFlashMessage(message: String) {
+        val localNow = System.currentTimeMillis()
+        if (localNow - lastFlashMessageTime < 500) { // Slightly longer cooldown for large text
+            Log.d(TAG, "sendFlashMessage: Rate limited (spam protection)")
+            return
+        }
+        lastFlashMessageTime = localNow
+
         val now = timeSyncEngine.getGlobalTime()
         val event = FlashMessageEvent(
             message = message,
             timestamp = now,
             senderName = getCurrentUserName()
         )
+        processedSocialEvents.add(event.eventId)
         Log.i(TAG, "sendFlashMessage: $message")
         eventBroadcaster?.invoke(event)
         // Also emit locally
@@ -1287,12 +1324,20 @@ class SessionManager(
     }
 
     fun sendKineticTouch(x: Float, y: Float) {
+        val localNow = System.currentTimeMillis()
+        if (localNow - lastKineticTouchTime < 100) { // Fast cooldown for fluid ripples
+            Log.d(TAG, "sendKineticTouch: Rate limited (spam protection)")
+            return
+        }
+        lastKineticTouchTime = localNow
+
         val now = timeSyncEngine.getGlobalTime()
         val event = KineticTouchEvent(
             x = x,
             y = y,
             timestamp = now
         )
+        processedSocialEvents.add(event.eventId)
         Log.d(TAG, "sendKineticTouch: x=$x, y=$y")
         eventBroadcaster?.invoke(event)
         // Also emit locally
@@ -1334,11 +1379,25 @@ class SessionManager(
         
         // Get metadata for the track
         val metadata = metadataProvider?.invoke()
-        Log.d("metadata_info_debug", "onTrackChanged: [HOST] Retrieved metadata for $mediaId: Title='${metadata?.first}', Artist='${metadata?.second}', Art='${metadata?.third}'")
+        Log.d("MusicSyncFlow", "onTrackChanged: [HOST] Retrieved metadata for $mediaId: Title='${metadata?.first}', Artist='${metadata?.second}', Art='${metadata?.third}'")
         
         // Broadcast the track change (Host or Participant requesting new track)
         val now = timeSyncEngine.getGlobalTime()
         val scheduledStartTime = if (isHost) now + SYNC_LEAD_TIME_MS else now
+        
+        // FIX: Generate fingerprint INLINE for local media, because the playbackState
+        // onEach collector may not have run yet (race condition).
+        var fingerprint = _sessionState.value.mediaFingerprint
+        if (mediaId.startsWith("content://") || mediaId.startsWith("file://")) {
+            val freshFingerprint = com.github.musicyou.utils.DeviceMediaManager.getFingerprintFromUri(context, mediaId)
+            if (freshFingerprint != null) {
+                fingerprint = freshFingerprint
+                Log.i("MusicSyncFlow", "onTrackChanged: Generated fingerprint inline: ${freshFingerprint.title} (${freshFingerprint.durationMs}ms)")
+                _sessionState.update { it.copy(mediaFingerprint = freshFingerprint) }
+            } else {
+                Log.e("MusicSyncFlow", "onTrackChanged: Failed to generate fingerprint for $mediaId")
+            }
+        }
         
         val event = PlayEvent(
             mediaId = mediaId,
@@ -1349,7 +1408,7 @@ class SessionManager(
             artist = metadata?.second,
             thumbnailUrl = metadata?.third,
             requesterName = getCurrentUserName(),  // Always include name (Host or Participant)
-            mediaFingerprint = _sessionState.value.mediaFingerprint  // Include fingerprint for local media matching
+            mediaFingerprint = fingerprint  // Include fingerprint for local media matching
         )
         
         if (isHost) {
@@ -1377,6 +1436,7 @@ class SessionManager(
                     thumbnailUrl = metadata?.third
                 )
             }
+            android.util.Log.d("ytSync", "SessionManager: HOST sending PlayEvent for mediaId=$mediaId at globalTime=$scheduledStartTime")
             Log.i(TAG, "onTrackChanged: HOST sending PlayEvent at globalTime=$scheduledStartTime for $mediaId")
             eventBroadcaster?.invoke(event)
             
@@ -1695,19 +1755,19 @@ class SessionManager(
                         
                         // 1. Check Media Mismatch
                         if (localMediaId != event.currentMediaId) {
-                            Log.w("halt_debug", "VALIDATION FAIL: Media Mismatch! Local=$localMediaId, Host=${event.currentMediaId}. Requesting Sync.")
+                            Log.w("MusicSyncFlow", "VALIDATION FAIL: Media Mismatch! Local=$localMediaId, Host=${event.currentMediaId}. Requesting Sync.")
                             requestFullSync("validation-fail-media")
                         } 
                         // 2. Check Status Mismatch (Host Playing, Local Paused)
                         else if (event.playbackStatus == SessionState.Status.PLAYING && localStatus != SessionState.Status.PLAYING) {
-                             Log.w("halt_debug", "VALIDATION FAIL: Status Mismatch! Local=$localStatus, Host=PLAYING. Requesting Sync.")
+                             Log.w("MusicSyncFlow", "VALIDATION FAIL: Status Mismatch! Local=$localStatus, Host=PLAYING. Requesting Sync.")
                              requestFullSync("validation-fail-status")
                         }
                         // 3. Check Major Position Drift (> 3s)
                         else if (localStatus == SessionState.Status.PLAYING && event.playbackStatus == SessionState.Status.PLAYING) {
                              val diff = kotlin.math.abs(localPos - event.currentPos)
                              if (diff > 3000) {
-                                  Log.w("halt_debug", "VALIDATION FAIL: Major Drift! Local=$localPos, Host=${event.currentPos}, Diff=$diff. Requesting Sync.")
+                                  Log.w("MusicSyncFlow", "VALIDATION FAIL: Major Drift! Local=$localPos, Host=${event.currentPos}, Diff=$diff. Requesting Sync.")
                                   requestFullSync("validation-fail-drift")
                              }
                         }
@@ -1761,6 +1821,18 @@ class SessionManager(
             }
 
             is ReactionEvent, is FlashMessageEvent, is KineticTouchEvent -> {
+                val eventId = when (event) {
+                    is ReactionEvent -> event.eventId
+                    is FlashMessageEvent -> event.eventId
+                    is KineticTouchEvent -> event.eventId
+                    else -> return
+                }
+                
+                if (!processedSocialEvents.add(eventId)) {
+                    Log.d(TAG, "processEvent: Ignoring duplicate/echoed social event $eventId")
+                    return
+                }
+
                 // Emit to social flow for UI to handle
                 scope.launch { _socialEvents.emit(event) }
                 
@@ -1834,7 +1906,7 @@ class SessionManager(
                     val currentPos = playbackEngine.getCurrentPosition()
                     val positionDrift = kotlin.math.abs(expectedPos - currentPos)
                     
-                    Log.d("halt_debug", "applySnapshot: Drift Analysis - Current=$currentPos, Expected=$expectedPos, Drift=$positionDrift, Speed=$effectiveSpeed, Status=${state.playbackStatus}")
+                    Log.d("MusicSyncFlow", "applySnapshot: Drift Analysis - Current=$currentPos, Expected=$expectedPos, Drift=$positionDrift, Speed=$effectiveSpeed, Status=${state.playbackStatus}")
                     
                     val currentMediaId = playbackEngine.playbackState.value.mediaId
                     val currentIsPlaying = playbackEngine.playbackState.value.isPlaying
@@ -1856,7 +1928,7 @@ class SessionManager(
                         state.playbackSpeed == currentSpeed &&  // Check speed to detect speed changes
                         positionDrift < DRIFT_THRESHOLD_MS && 
                         (System.currentTimeMillis() - lastAppliedTimestamp) < DEDUP_THRESHOLD_MS) {
-                        Log.d("halt_debug", "applySnapshot: IGNORED (dedup/drift limits)")
+                        Log.d("MusicSyncFlow", "applySnapshot: IGNORED (dedup/drift limits)")
                         return@withLock
                     }
                     
@@ -1876,7 +1948,7 @@ class SessionManager(
         
             // APPLY STATE
             _sessionState.update { current ->
-                Log.d("metadata_info_debug", "applySnapshot: [GUEST] Applying state. MediaId(Inc: ${state.currentMediaId} vs Loc: ${current.currentMediaId}). Incoming Metadata: Title='${state.title}'")
+                Log.d("MusicSyncFlow", "applySnapshot: [GUEST] Applying state. MediaId(Inc: ${state.currentMediaId} vs Loc: ${current.currentMediaId}). Incoming Metadata: Title='${state.title}'")
                 
                 // MERGE FIX: Start with current data to prevent loss during partial updates (Play/Pause)
                 // These events result in empty/partial maps in 'state', so we must preserve 'current' data
@@ -1903,7 +1975,7 @@ class SessionManager(
                                          current.title != null
                                          
                 val finalTitle = if (useExistingMetadata) {
-                     Log.d("metadata_info_debug", "applySnapshot: Retaining local metadata (Incoming is null)")
+                     Log.d("MusicSyncFlow", "applySnapshot: Retaining local metadata (Incoming is null)")
                      current.title
                 } else state.title
                 
@@ -1936,30 +2008,79 @@ class SessionManager(
         )
 
         // Check if we need to load a new track or just update playback state
-        val isSameTrack = currentMediaId == state.currentMediaId && state.currentMediaId != null
-        
+        // Use lastSyncedMediaId as well, because loadTrack is async and playbackEngine's mediaId lags
         // FIX: Check for Local File Match
         var resolvedUri: String? = null
         var syncMessage = state.clockSyncMessage
         
-        if (!isHost && state.mediaFingerprint != null && !isSameTrack) {
-             val match = com.github.musicyou.utils.DeviceMediaManager.findMatchingMedia(context, state.mediaFingerprint)
-             if (match != null) {
-                 resolvedUri = match.toString()
-                 syncMessage = "Playing from Local Storage 📂"
-                 Log.d("halt_debug", "applySnapshot: Local match found: $resolvedUri")
-             } else {
-                 syncMessage = "File not found locally! ⚠️"
-                 Log.w(TAG, "applySnapshot: Local match failed for '${state.mediaFingerprint.title}'")
-                 scope.launch {
-                     toastHandler?.invoke("⚠️ Local Sync Failed\nMedia not found: '${state.mediaFingerprint.title}'")
-                 }
-                 // Set resolvedUri to null is implicit, but prevents playing wrong file
-             }
-             _sessionState.update { it.copy(
-                 clockSyncMessage = syncMessage,
-                 localMatchUri = resolvedUri
-             )}
+        // CRITICAL GUARD: Protect ALL clients (Host and Guest) from loading a peer's raw content:// URI.
+        val isPeerLocalUri = state.currentMediaId?.startsWith("content://") == true || state.currentMediaId?.startsWith("file://") == true
+        
+        // Construct a MediaItem with metadata from the state so the Player UI doesn't crash/show white screen
+        var mediaItem: androidx.media3.common.MediaItem? = null
+        state.currentMediaId?.let { mediaId ->
+            val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
+            state.title?.let { metadataBuilder.setTitle(it) }
+            state.artist?.let { metadataBuilder.setArtist(it) }
+            state.thumbnailUrl?.let { metadataBuilder.setArtworkUri(android.net.Uri.parse(it)) }
+            
+            val mediaItemBuilder = androidx.media3.common.MediaItem.Builder()
+                .setMediaId(mediaId)
+                .setMediaMetadata(metadataBuilder.build())
+            
+            if (resolvedUri != null) {
+                mediaItemBuilder.setUri(resolvedUri)
+            }
+            mediaItem = mediaItemBuilder.build()
+        }
+
+        // If the engine currently has no mediaItem (e.g. we rejoined the same session but engine state was lost/null), 
+        // we must force a reload so the UI gets the metadata!
+        val isMissingMetadata = state.currentMediaId != null && playbackEngine.playbackState.value.mediaItem == null
+        val isSameTrack = !isMissingMetadata && (currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId) && state.currentMediaId != null
+
+        if (!isSameTrack && isPeerLocalUri) {
+            if (state.mediaFingerprint == null) {
+                Log.w("MusicSyncFlow", "applySnapshot: ABORTING - received peer's local URI (${state.currentMediaId}) without fingerprint. Ignoring.")
+                return@withLock
+            }
+            
+            val match = com.github.musicyou.utils.DeviceMediaManager.findMatchingMedia(context, state.mediaFingerprint)
+            if (match != null) {
+                resolvedUri = match.toString()
+                syncMessage = "Playing from Local Storage 📂"
+                Log.d("MusicSyncFlow", "applySnapshot: Local match found: $resolvedUri")
+                
+                _sessionState.update { it.copy(
+                    clockSyncMessage = syncMessage,
+                    localMatchUri = resolvedUri
+                )}
+            } else {
+                syncMessage = "File not found locally! ⚠️"
+                Log.w(TAG, "applySnapshot: Local match failed for '${state.mediaFingerprint.title}'. Manual fallback prompted.")
+                scope.launch {
+                    toastHandler?.invoke("⚠️ Local Sync Failed\nMedia not found: '${state.mediaFingerprint.title}'")
+                }
+                
+                // Fallback to manual selection
+                _sessionState.update { current ->
+                    current.copy(
+                        playbackStatus = SessionState.Status.PAUSED,
+                        clockSyncMessage = syncMessage,
+                        isPendingManualMatch = true, // Trigger manual match UI
+                        localMatchUri = null
+                    )
+                }
+                Log.w("MusicSyncFlow", "applySnapshot: ABORTING - will not load peer's local URI on this device")
+                playbackEngine.pause()
+                return@withLock
+            }
+        } else if (isSameTrack && isPeerLocalUri) {
+            // Keep using the existing resolved URI if we are already on this track
+            resolvedUri = _sessionState.value.localMatchUri
+        } else if (!isPeerLocalUri) {
+            // Not a peer local URI, so clear any leftover local match
+            _sessionState.update { it.copy(localMatchUri = null) }
         }
         
         if (state.mediaFingerprint == null && _sessionState.value.localMatchUri != null) {
@@ -1968,14 +2089,16 @@ class SessionManager(
 
         // Apply Playback Speed
         if (playbackEngine.playbackState.value.playbackSpeed != state.playbackSpeed) {
-             Log.d("halt_debug", "applySnapshot: Changing speed to ${state.playbackSpeed}x")
+             Log.d("MusicSyncFlow", "applySnapshot: Changing speed to ${state.playbackSpeed}x")
              playbackEngine.setPlaybackSpeed(state.playbackSpeed)
         }
 
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
-            val needsSeek = positionDrift > POSITION_DRIFT_THRESHOLD_MS
-            Log.d("halt_debug", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $POSITION_DRIFT_THRESHOLD_MS)")
+            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
+            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
+            val needsSeek = positionDrift > thresholdMs
+            Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs)")
             
             when (state.playbackStatus) {
                 SessionState.Status.PLAYING -> {
@@ -1986,14 +2109,18 @@ class SessionManager(
                                 anchorTime = state.trackStartGlobalTime,
                                 speed = effectiveSpeed
                             )
-                            Log.d("halt_debug", "applySnapshot: SEEKING guest to $correctPos (Reason: Drift $positionDrift > $POSITION_DRIFT_THRESHOLD_MS)")
+                            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
+                            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
+                            Log.d("MusicSyncFlow", "applySnapshot: SEEKING guest to $correctPos (Reason: Drift $positionDrift > $thresholdMs)")
                             playbackEngine.seekTo(correctPos)
                         } else {
-                            Log.d("halt_debug", "applySnapshot: Ignoring small drift (Drift $positionDrift < $POSITION_DRIFT_THRESHOLD_MS). Keeping current pos.")
+                            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
+                            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
+                            Log.d("MusicSyncFlow", "applySnapshot: Ignoring small drift (Drift $positionDrift < $thresholdMs). Keeping current pos.")
                         }
                         
                         if (!currentIsPlaying) {
-                             Log.d("halt_debug", "applySnapshot: Starting playback (was paused)")
+                             Log.d("MusicSyncFlow", "applySnapshot: Starting playback (was paused)")
                              playbackEngine.play()
                         }
                         
@@ -2012,10 +2139,10 @@ class SessionManager(
                     }
                 }
                 SessionState.Status.PAUSED -> {
-                    Log.d("halt_debug", "applySnapshot: State PAUSED - Pausing engine")
+                    Log.d("MusicSyncFlow", "applySnapshot: State PAUSED - Pausing engine")
                     playbackEngine.pause()
                     if (needsSeek) {
-                        Log.d("halt_debug", "applySnapshot: SEEKING paused guest to $targetPos")
+                        Log.d("MusicSyncFlow", "applySnapshot: SEEKING paused guest to $targetPos")
                         playbackEngine.seekTo(targetPos)
                     }
                 }
@@ -2025,7 +2152,7 @@ class SessionManager(
             }
         } else {
             // DIFFERENT TRACK
-            Log.d("halt_debug", "applySnapshot: New Track ${state.currentMediaId}")
+            Log.d("MusicSyncFlow", "applySnapshot: New Track ${state.currentMediaId}")
             playbackEngine.pause()
             
             val shouldAutoPlay = state.playbackStatus == SessionState.Status.PLAYING
@@ -2035,9 +2162,15 @@ class SessionManager(
                 lastSyncedMediaId = mediaId
                 lastSyncedTimestamp = System.currentTimeMillis()
                 
+                val itemToLoad = mediaItem ?: return@let
+                
                 if (shouldAutoPlay && scheduledStartTime > now) {
-                    Log.d("halt_debug", "applySnapshot: Scheduled Start for $mediaId")
-                    playbackEngine.loadTrack(mediaId, state.positionAtAnchor, autoPlay = false, customUri = resolvedUri)
+                    Log.d("MusicSyncFlow", "applySnapshot: Scheduled Start for $mediaId")
+                    if (resolvedUri != null || mediaId.startsWith("youtube-embed:")) {
+                        playbackEngine.loadMediaItem(itemToLoad, state.positionAtAnchor, autoPlay = false)
+                    } else {
+                        playbackEngine.loadTrack(mediaId, state.positionAtAnchor, autoPlay = false, customUri = resolvedUri)
+                    }
                     
                     scope.launch {
                         waitForScheduledTime(scheduledStartTime)
@@ -2049,14 +2182,18 @@ class SessionManager(
                         )
                         
                         if (!isHost) {
-                            Log.d("halt_debug", "applySnapshot: Scheduled Seek to $startPos")
+                            Log.d("MusicSyncFlow", "applySnapshot: Scheduled Seek to $startPos")
                             playbackEngine.seekTo(startPos)
                         }
                         playbackEngine.play()
                     }
                 } else {
-                    Log.d("halt_debug", "applySnapshot: Immediate Load/Play for $mediaId")
-                    playbackEngine.loadTrack(mediaId, targetPos, shouldAutoPlay, customUri = resolvedUri)
+                    Log.d("MusicSyncFlow", "applySnapshot: Immediate Load/Play for $mediaId")
+                    if (resolvedUri != null || mediaId.startsWith("youtube-embed:")) {
+                        playbackEngine.loadMediaItem(itemToLoad, targetPos, shouldAutoPlay)
+                    } else {
+                        playbackEngine.loadTrack(mediaId, targetPos, shouldAutoPlay, customUri = resolvedUri)
+                    }
                 }
             }
         }
@@ -2108,6 +2245,18 @@ class SessionManager(
         } else {
             Log.w(TAG, "Force Play Local: No local match available to play")
         }
+    }
+    /**
+     * Set a manual local file match when automatic matching fails.
+     */
+    fun setManualMatchUri(uri: String) {
+        Log.i(TAG, "Manual file selection triggered! Overriding localMatchUri with: $uri")
+        _sessionState.update { it.copy(
+            localMatchUri = uri,
+            clockSyncMessage = "Playing from manually selected file 📂",
+            isPendingManualMatch = false // Clear pending flag once a file is selected
+        )}
+        forcePlayLocal()
     }
 
     private fun formatTime(ms: Long): String {

@@ -58,10 +58,19 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import android.app.Activity
+import android.content.Context
+import android.media.AudioManager
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
+import com.github.musicyou.ui.screens.player.components.DoubleTapSeekOverlay
+import com.github.musicyou.ui.screens.player.components.VolumeBrightnessOverlay
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -70,6 +79,13 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.github.musicyou.utils.rememberPreference
+import com.github.musicyou.utils.videoResizeModeKey
+import com.github.musicyou.utils.doubleTapSeekDurationKey
+import com.github.musicyou.utils.scrubSeekIntensityKey
+import com.github.musicyou.utils.fastForwardSpeedTopKey
+import com.github.musicyou.utils.fastForwardSpeedMidKey
+import com.github.musicyou.utils.fastForwardSpeedBotKey
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -81,12 +97,14 @@ fun VideoSurface(
     onRewindEnd: () -> Unit = {},
     onSeek: (Long) -> Unit = {},
     onPlayPause: () -> Unit = {},
-    onSpeedChange: (Float) -> Unit = {}
+    onSpeedChange: (Float) -> Unit = {},
+    isLocked: Boolean = false,
+    onLockedChange: (Boolean) -> Unit = {},
+    baselineSpeed: Float = 1f
 ) {
     // Gesture State
     var isBoosting by remember { mutableStateOf(false) }
     var isRewinding by remember { mutableStateOf(false) }
-    var isLocked by remember { mutableStateOf(false) }
     var isLockControlsVisible by remember { mutableStateOf(false) } // For unlocking
     
     // Feedback State
@@ -94,19 +112,67 @@ fun VideoSurface(
     var playPauseState by remember { mutableStateOf<PlayPauseData?>(null) }
     var zoomToastState by remember { mutableStateOf<String?>(null) } 
     
+    // Preferences
+    val prefResizeMode by rememberPreference(videoResizeModeKey, AspectRatioFrameLayout.RESIZE_MODE_FIT)
+    val doubleTapSeekDuration by rememberPreference(doubleTapSeekDurationKey, 10)
+    val scrubSeekIntensity by rememberPreference(scrubSeekIntensityKey, 1.0f)
+    val ffTopSpeed by rememberPreference(fastForwardSpeedTopKey, 3.0f)
+    val ffMidSpeed by rememberPreference(fastForwardSpeedMidKey, 2.0f)
+    val ffBotSpeed by rememberPreference(fastForwardSpeedBotKey, 1.5f)
     // Zoom / Resize State
-    var resizeMode by remember { mutableStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var resizeMode by remember { mutableStateOf(prefResizeMode) }
+    
+    // Sync initial preference if changed externally
+    LaunchedEffect(prefResizeMode) {
+        resizeMode = prefResizeMode
+    }
+
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    
+    // Default 50% brightness
+    LaunchedEffect(Unit) {
+        activity?.window?.attributes = activity?.window?.attributes?.apply {
+            if (screenBrightness < 0) {
+                screenBrightness = 0.5f
+            }
+        }
+    }
+    
+    // Loudness Enhancer for 200% volume
+    val exoPlayer = player as? androidx.media3.exoplayer.ExoPlayer
+    var loudnessEnhancer by remember { mutableStateOf<android.media.audiofx.LoudnessEnhancer?>(null) }
+    
+    DisposableEffect(exoPlayer?.audioSessionId) {
+        val sessionId = exoPlayer?.audioSessionId ?: androidx.media3.common.C.AUDIO_SESSION_ID_UNSET
+        if (sessionId != androidx.media3.common.C.AUDIO_SESSION_ID_UNSET) {
+            try {
+                loudnessEnhancer?.release()
+                loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(sessionId).apply {
+                    enabled = true
+                }
+            } catch(e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        
+        onDispose {
+            loudnessEnhancer?.release()
+            loudnessEnhancer = null
+        }
+    }
+    var currentSoftwareBoost by remember { mutableFloatStateOf(0f) }
+
+    var currentVolume by remember { mutableStateOf<Float?>(null) }
+    var currentBrightness by remember { mutableStateOf<Float?>(null) }
     
     // Tap Timing State
     var lastTapTime by remember { mutableStateOf(0L) }
     var tapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val tapScope = androidx.compose.runtime.rememberCoroutineScope() // Controls visibility of the big lock icon
     
-    // Drag for Lock (0f to 1f)
-    var lockDragProgress by remember { mutableFloatStateOf(0f) }
-    
     var currentSpeedMultiplier by remember { mutableFloatStateOf(2.0f) } 
-    var originalSpeed by remember { mutableFloatStateOf(1f) }
     
     // Y-Tracking for Zone Detection
     var activeZoneIndex by remember { mutableStateOf(1) } 
@@ -115,16 +181,8 @@ fun VideoSurface(
     DisposableEffect(Unit) {
         onDispose {
             if (isBoosting || isLocked) {
-                onSpeedChange(originalSpeed)
+                onSpeedChange(baselineSpeed)
             }
-        }
-    }
-    
-    // Auto-Hide Lock Controls
-    LaunchedEffect(isLockControlsVisible) {
-        if (isLockControlsVisible) {
-            delay(3000)
-            isLockControlsVisible = false
         }
     }
 
@@ -133,14 +191,23 @@ fun VideoSurface(
          if (!isLocked) {
              isBoosting = false
              isRewinding = false
-             onSpeedChange(originalSpeed)
+             isLockControlsVisible = false
+             onSpeedChange(baselineSpeed)
+         } else {
+             isLockControlsVisible = true
          }
+    }
+
+    LaunchedEffect(isLockControlsVisible, isLocked) {
+        if (isLockControlsVisible && isLocked) {
+            delay(3000)
+            isLockControlsVisible = false
+        }
     }
 
     // Rewind Loop Logic
     LaunchedEffect(isRewinding, currentSpeedMultiplier, isLocked) {
         if (isRewinding || (isLocked && isRewinding)) { 
-            if (!isLocked) originalSpeed = player.playbackParameters.speed
             if (player.isPlaying) player.pause()
             
             while (isActive) {
@@ -150,10 +217,7 @@ fun VideoSurface(
                 delay(30) 
             }
         } else if (!isBoosting && !isRewinding && !isLocked) {
-             if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
-             } else {
-                 onPlayPause()
-             }
+             // Let the player resume normal state, but DO NOT auto-toggle play/pause
         }
     }
 
@@ -164,32 +228,12 @@ fun VideoSurface(
                 onSpeedChange(currentSpeedMultiplier)
             }
         } else if (!isRewinding && !isLocked) {
-             if (player.playbackParameters.speed != originalSpeed) {
-                onSpeedChange(originalSpeed)
+             if (player.playbackParameters.speed != baselineSpeed) {
+                onSpeedChange(baselineSpeed)
             }
         }
     }
     
-    // Time-Based Lock Logic
-    LaunchedEffect(isBoosting, isRewinding, isLocked) {
-        if ((isBoosting || isRewinding) && !isLocked) {
-            val startTime = System.currentTimeMillis()
-            val lockDuration = 5000L // 5 seconds to lock
-            
-            while (isActive) {
-                val elapsed = System.currentTimeMillis() - startTime
-                lockDragProgress = (elapsed / lockDuration.toFloat()).coerceIn(0f, 1f)
-                
-                if (lockDragProgress >= 1f) {
-                    isLocked = true
-                    // Vibrate or feedback here could be nice
-                }
-                delay(16) // ~60fps update
-            }
-        } else {
-            lockDragProgress = 0f
-        }
-    }
 
     Box(
         modifier = modifier
@@ -202,6 +246,8 @@ fun VideoSurface(
                 PlayerView(context).apply {
                     this.player = player
                     useController = false
+                    isClickable = false
+                    isFocusable = false
                     resizeMode = resizeMode
                     setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     layoutParams = FrameLayout.LayoutParams(
@@ -226,7 +272,7 @@ fun VideoSurface(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(isLocked) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         
@@ -234,7 +280,7 @@ fun VideoSurface(
                         // LOCKED STATE HANDLING
                         if (isLocked) {
                             down.consume()
-                            isLockControlsVisible = !isLockControlsVisible
+                            isLockControlsVisible = true
                             // Consume all subsequent events to block gestures
                              do {
                                 val event = awaitPointerEvent()
@@ -263,6 +309,7 @@ fun VideoSurface(
                         var isTap = false
                         var isDrag = false
                         var isPinch = false
+                        var dragType = 0 // 1: Vertical, 2: Horizontal
                         val longPressTimeout = 250L
                         
                         try {
@@ -285,13 +332,18 @@ fun VideoSurface(
                                         throw kotlinx.coroutines.CancellationException("Tap detected") 
                                     }
                                     
-                                    val dragAmount = change.positionChange().getDistance()
-                                    if (dragAmount > viewConfiguration.touchSlop) {
+                                    val dragAmount = change.position - down.position
+                                    if (dragAmount.getDistance() > viewConfiguration.touchSlop) {
                                         // MOVED > SLOP -> DRAG
                                         isDrag = true
-                                         throw kotlinx.coroutines.CancellationException("Drag detected") 
+                                        if (kotlin.math.abs(dragAmount.y) > kotlin.math.abs(dragAmount.x)) {
+                                            dragType = 1
+                                        } else {
+                                            dragType = 2
+                                        }
+                                        change.consume()
+                                        throw kotlinx.coroutines.CancellationException("Drag detected") 
                                     }
-                                    change.consume()
                                 }
                             }
                         } catch (e: Exception) {
@@ -332,13 +384,14 @@ fun VideoSurface(
                             if (isDoubleTap) {
                                 // DOUBLE TAP -> SEEK
                                 tapJob?.cancel() // Cancel pending play/pause
+                                val seekDurationMs = doubleTapSeekDuration * 1000L
                                 if (isLeftZone) {
-                                    // Rewind 10s
-                                    onSeek((player.currentPosition - 10000).coerceAtLeast(0))
+                                    // Rewind
+                                    onSeek((player.currentPosition - seekDurationMs).coerceAtLeast(0))
                                     seekRippleState = SeekRippleData(isForward = false)
                                 } else {
-                                    // Forward 10s
-                                    onSeek((player.currentPosition + 10000).coerceAtMost(player.duration))
+                                    // Forward
+                                    onSeek((player.currentPosition + seekDurationMs).coerceAtMost(player.duration))
                                     seekRippleState = SeekRippleData(isForward = true)
                                 }
                                 // Clear ripple after animation
@@ -348,75 +401,190 @@ fun VideoSurface(
                                 }
                                 lastTapTime = 0L 
                             } else {
-                                // SINGLE TAP -> SCHEDULE PLAY/PAUSE
+                                // SINGLE TAP -> TOGGLE CONTROLS (NO PLAY/PAUSE)
                                 lastTapTime = currentTime
                                 tapJob = tapScope.launch {
                                     delay(300) // Wait for potential second tap
-                                    if (player.isPlaying) {
-                                        onPlayPause()
-                                        playPauseState = PlayPauseData(isPlaying = false)
-                                    } else {
-                                        onPlayPause()
-                                        playPauseState = PlayPauseData(isPlaying = true)
-                                    }
                                     onTap()
-                                    delay(800)
-                                    playPauseState = null
                                 }
                             }
                             return@awaitEachGesture
                         }
                         
-                        // --- HOLD / DRAG PHASE (Speed Zone) ---
+                        // --- HOLD / DRAG PHASE ---
                         // If we are here, it's either a TIMEOUT (Hold) or a DRAG start
                         
-                        currentSpeedMultiplier = when(activeZoneIndex) {
-                            0 -> 3.0f
-                            1 -> 2.0f
-                            else -> 1.5f
-                        }
-                        
-                        originalSpeed = player.playbackParameters.speed
-                        
-                        if (isLeftZone) {
-                            isRewinding = true
-                        } else {
-                             isBoosting = true
-                        }
-                        onGestureActive(true)
-                        
-                        var totalDragX = 0f
-                        
-                        // Hold Loop (Wait for release, update zones)
-                        // Progress is handled by LaunchedEffect above
-                        do {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { 
-                                if (it.pressed) {
-                                    val currentY = it.position.y
-                                    activeZoneIndex = (currentY / zoneHeight).toInt().coerceIn(0, 2)
-                                    
-                                     currentSpeedMultiplier = when(activeZoneIndex) {
-                                        0 -> 3.0f
-                                        1 -> 2.0f
-                                        else -> 1.5f
+                        if (dragType == 1) {
+                            // Vertical Drag -> Volume/Brightness
+                            var totalDragY = 0f
+                            val maxDragDistance = screenHeight / 2f
+                            
+                            var startVolume = 0f
+                            var startBrightness = 0f
+                            
+                            if (isLeftZone) {
+                                startBrightness = activity?.window?.attributes?.screenBrightness ?: -1f
+                                if (startBrightness < 0) {
+                                    try {
+                                        startBrightness = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+                                    } catch (e: Exception) {
+                                        startBrightness = 0.5f
                                     }
+                                }
+                                currentBrightness = startBrightness
+                            } else {
+                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
+                                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+                                val hardwareVol = if (maxVol > 0) currentVol / maxVol else 0f
+                                
+                                startVolume = if (hardwareVol >= 1f) {
+                                    1f + currentSoftwareBoost
+                                } else {
+                                    currentSoftwareBoost = 0f
+                                    hardwareVol
+                                }
+                                currentVolume = startVolume
+                            }
+                            
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.pressed }
+                                if (change != null) {
+                                    val deltaY = change.positionChange().y
+                                    totalDragY += deltaY
+                                    val changePercent = -totalDragY / maxDragDistance
                                     
-                                    it.consume()
+                                    if (isLeftZone) {
+                                        val newBrightness = (startBrightness + changePercent).coerceIn(0f, 1f)
+                                        currentBrightness = newBrightness
+                                        activity?.window?.attributes = activity?.window?.attributes?.apply { 
+                                            screenBrightness = newBrightness 
+                                        }
+                                    } else {
+                                        val newVolume = (startVolume + changePercent).coerceIn(0f, 2f)
+                                        currentVolume = newVolume
+                                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                        
+                                        if (newVolume <= 1f) {
+                                            currentSoftwareBoost = 0f
+                                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newVolume * maxVol).roundToInt(), 0)
+                                            try { loudnessEnhancer?.setTargetGain(0) } catch(e: Exception) {}
+                                        } else {
+                                            currentSoftwareBoost = newVolume - 1f
+                                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
+                                            try { loudnessEnhancer?.setTargetGain((currentSoftwareBoost * 1500).toInt()) } catch(e: Exception) {}
+                                        }
+                                    }
+                                    change.consume()
+                                }
+                            } while (event.changes.any { it.pressed })
+                            
+                            currentBrightness = null
+                            currentVolume = null
+                            
+                        } else if (dragType == 2) {
+                            // Horizontal Drag -> Seek / Scrub
+                            var totalDragX = 0f
+                            val maxDragDistance = screenWidth.toFloat()
+                            val startPosition = player.currentPosition
+                            val videoDuration = player.duration.coerceAtLeast(1L)
+                            
+                            do {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.pressed }
+                                if (change != null) {
+                                    val deltaX = change.positionChange().x
+                                    totalDragX += deltaX
+                                    
+                                    // Scale scrub based on video length
+                                    val seekRangeMs = if (videoDuration > 600000L) {
+                                        // > 10 min: full width = 10% of video
+                                        videoDuration / 10f
+                                    } else {
+                                        // < 10 min: full width = 2 minutes (or duration)
+                                        kotlin.math.min(120000f, videoDuration.toFloat())
+                                    }
+                                    // Apply user scrubSeekIntensity multiplier
+                                    val seekMsPerPixel = (seekRangeMs / maxDragDistance) * scrubSeekIntensity
+                                    
+                                    val seekAmount = (totalDragX * seekMsPerPixel).toLong()
+                                    val newPosition = (startPosition + seekAmount).coerceIn(0, videoDuration)
+                                    
+                                    onSeek(newPosition)
+                                    
+                                    // Feedback using toast
+                                    val totalSeconds = newPosition / 1000
+                                    val minutes = totalSeconds / 60
+                                    val seconds = totalSeconds % 60
+                                    val timeString = "${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+                                    
+                                    val diff = newPosition - startPosition
+                                    val sign = if (diff >= 0) "+" else "-"
+                                    val diffSeconds = kotlin.math.abs(diff) / 1000
+                                    val diffMins = diffSeconds / 60
+                                    val diffSecs = diffSeconds % 60
+                                    val diffString = "${sign}${diffMins.toString().padStart(2, '0')}:${diffSecs.toString().padStart(2, '0')}"
+                                    
+                                    zoomToastState = "$timeString  [$diffString]"
+                                    
+                                    change.consume()
+                                }
+                            } while (event.changes.any { it.pressed })
+                            
+                            // Clear toast after scrubbing
+                            tapScope.launch {
+                                delay(800)
+                                if (zoomToastState?.contains("[") == true) {
+                                    zoomToastState = null
                                 }
                             }
-                        } while (event.changes.any { it.pressed })
-
-                        // Release
-                        if (!isLocked) {
-                             if (isRewinding) {
-                                onRewindEnd()
+                            
+                        } else {
+                            // Hold (dragType == 0) -> Speed Zone
+                            currentSpeedMultiplier = when(activeZoneIndex) {
+                                0 -> ffTopSpeed
+                                1 -> ffMidSpeed
+                                else -> ffBotSpeed
                             }
-                            isBoosting = false
-                            isRewinding = false
+                            
+                            
+                            // baselineSpeed is used instead of originalSpeed (passed from Player.kt)
+                            
+                            if (isLeftZone) {
+                                isRewinding = true
+                            } else {
+                                 isBoosting = true
+                            }
+                            onGestureActive(true)
+                            
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { 
+                                    if (it.pressed) {
+                                        val currentY = it.position.y
+                                        activeZoneIndex = (currentY / zoneHeight).toInt().coerceIn(0, 2)
+                                        
+                                         currentSpeedMultiplier = when(activeZoneIndex) {
+                                            0 -> ffTopSpeed
+                                            1 -> ffMidSpeed
+                                            else -> ffBotSpeed
+                                        }
+                                        
+                                        it.consume()
+                                    }
+                                }
+                            } while (event.changes.any { it.pressed })
+    
+                            // Release
+                            if (!isLocked) {
+                                 if (isRewinding) {
+                                    onRewindEnd()
+                                }
+                                isBoosting = false
+                                isRewinding = false
+                            }
+                            onGestureActive(false)
                         }
-                        onGestureActive(false)
-                        lockDragProgress = 0f
                     }
                 }
         )
@@ -425,7 +593,15 @@ fun VideoSurface(
         
         // Seek Ripple
         seekRippleState?.let { data ->
-            SeekRippleOverlay(isForward = data.isForward, modifier = Modifier.fillMaxSize())
+            DoubleTapSeekOverlay(isForward = data.isForward)
+        }
+        
+        currentVolume?.let { vol ->
+            VolumeBrightnessOverlay(value = vol, isVolume = true)
+        }
+        
+        currentBrightness?.let { bright ->
+            VolumeBrightnessOverlay(value = bright, isVolume = false)
         }
         
         // Play/Pause Icon
@@ -452,39 +628,42 @@ fun VideoSurface(
             }
         }
 
-        // 4. LOCK OVERLAY (Button Based - Unlock Only)
-        if (isLocked && isLockControlsVisible) {
-             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                     androidx.compose.material3.IconButton(
-                         onClick = { isLocked = false },
-                         modifier = Modifier
-                             .size(64.dp)
-                             .background(Color.White, CircleShape)
-                     ) {
-                         Icon(
-                             imageVector = Icons.Default.LockOpen,
-                             contentDescription = "Unlock",
-                             tint = Color.Black,
-                             modifier = Modifier.size(32.dp)
-                         )
-                     }
-                     Spacer(modifier = Modifier.size(8.dp))
-                     Text("Tap to Unlock", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp)).padding(4.dp))
-                 }
-             }
+        // 4. Unlock Overlay
+        if (isLockControlsVisible && isLocked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black.copy(alpha = 0.4f))
+                        .clickable { 
+                            onLockedChange(false)
+                            isLockControlsVisible = false 
+                        }
+                        .padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.LockOpen,
+                        contentDescription = "Unlock",
+                        tint = Color.White,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Tap to Unlock",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
-        
-        // 5. LOCK DRAG PROGRESS OVERLAY
-        if (lockDragProgress > 0.05f && !isLocked) {
-             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                 LockProgressOverlay(
-                     progress = lockDragProgress,
-                     modifier = Modifier.padding(top = 48.dp)
-                 )
-             }
-        }
-        
+
         // Removed local corner lock button (moved to Player.kt)
 
 
@@ -508,31 +687,6 @@ fun VideoSurface(
 
 data class SeekRippleData(val isForward: Boolean)
 data class PlayPauseData(val isPlaying: Boolean)
-
-@Composable
-fun SeekRippleOverlay(isForward: Boolean, modifier: Modifier = Modifier) {
-    val align = if (isForward) Alignment.CenterEnd else Alignment.CenterStart
-    val shape = if (isForward) RoundedCornerShape(topStart = 100.dp, bottomStart = 100.dp) else RoundedCornerShape(topEnd = 100.dp, bottomEnd = 100.dp)
-    
-    Box(modifier = modifier, contentAlignment = align) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier
-                .fillMaxHeight(0.6f)
-                .width(100.dp)
-                .background(Color.White.copy(alpha = 0.2f), shape)
-        ) {
-            Icon(
-                imageVector = if (isForward) androidx.compose.material.icons.Icons.Filled.FastForward else androidx.compose.material.icons.Icons.Filled.FastRewind,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(40.dp)
-            )
-            Text(text = "10s", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-    }
-}
 
 
 @Composable

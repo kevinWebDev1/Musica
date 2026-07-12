@@ -24,6 +24,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberStandardBottomSheetState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,10 +74,19 @@ import com.github.musicyou.ui.components.OptionalUpdateDialog
 import com.github.musicyou.ui.screens.auth.GoogleSignInScreen
 import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.github.musicyou.sync.playback.PlaybackState as SyncPlaybackState
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.listeners.AbstractYouTubePlayerListener
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.options.IFramePlayerOptions
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.views.YouTubePlayerView
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
@@ -207,8 +217,126 @@ class MainActivity : ComponentActivity() {
 
                 AppTheme {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        CompositionLocalProvider(value = LocalPlayerServiceBinder provides binder) {
-                            val menuState = LocalMenuState.current
+                        // --- Retained YouTubePlayerView (created ONCE, survives navigation) ---
+                        val lifecycleOwner = LocalLifecycleOwner.current
+                        val ytPlayerRef = remember { mutableStateOf<YouTubePlayer?>(null) }
+
+                        val youtubePlayerView = remember(binder?.youtubeEngine) {
+                            binder?.youtubeEngine?.let { engine ->
+                                YouTubePlayerView(this@MainActivity).apply {
+                                    enableAutomaticInitialization = false
+                                    val options = IFramePlayerOptions.Builder(this@MainActivity)
+                                        .controls(0)   // Hide YouTube's native controls
+                                        .rel(0)        // No related videos at end
+                                        .ivLoadPolicy(3) // No annotations
+                                        .build()
+                                    try {
+                                        val videoId = engine.playbackState.value.mediaId?.removePrefix("youtube-embed:") ?: "jNQXAC9IVRw"
+                                        initialize(object : AbstractYouTubePlayerListener() {
+                                            override fun onReady(youTubePlayer: YouTubePlayer) {
+                                                android.util.Log.d("YouTubePlayerRetained", "onReady — player bridge established")
+                                                ytPlayerRef.value = youTubePlayer
+                                            }
+                                            override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
+                                                android.util.Log.d("YouTubePlayerRetained", "onStateChange: $state")
+                                                val isPlaying = state == PlayerConstants.PlayerState.PLAYING
+                                                val pbState = when (state) {
+                                                    PlayerConstants.PlayerState.PLAYING  -> SyncPlaybackState.STATE_READY
+                                                    PlayerConstants.PlayerState.PAUSED   -> SyncPlaybackState.STATE_READY
+                                                    PlayerConstants.PlayerState.BUFFERING -> SyncPlaybackState.STATE_BUFFERING
+                                                            PlayerConstants.PlayerState.ENDED    -> SyncPlaybackState.STATE_ENDED
+                                                    else -> SyncPlaybackState.STATE_IDLE
+                                                }
+                                                engine.reportStateChange(isPlaying, pbState)
+                                            }
+                                            override fun onCurrentSecond(youTubePlayer: YouTubePlayer, second: Float) {
+                                                engine.reportPosition((second * 1000).toLong())
+                                            }
+                                            override fun onVideoDuration(youTubePlayer: YouTubePlayer, duration: Float) {
+                                                engine.reportDuration((duration * 1000).toLong())
+                                            }
+                                            override fun onError(youTubePlayer: YouTubePlayer, error: PlayerConstants.PlayerError) {
+                                                android.util.Log.e("YouTubePlayerRetained", "Player error: $error")
+                                            }
+                                            override fun onApiChange(youTubePlayer: YouTubePlayer) {
+                                                android.util.Log.d("YouTubePlayerRetained", "onApiChange")
+                                            }
+                                        }, options)
+                                        android.util.Log.d("YouTubePlayerRetained", "initialize called immediately")
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("YouTubePlayerRetained", "Already initialized or error: ${e.message}")
+                                    }
+                                }
+                            }
+                        }
+
+                        // Lifecycle management for the retained view
+                        DisposableEffect(youtubePlayerView, lifecycleOwner) {
+                            youtubePlayerView?.let { lifecycleOwner.lifecycle.addObserver(it) }
+                            onDispose {
+                                youtubePlayerView?.let { lifecycleOwner.lifecycle.removeObserver(it) }
+                            }
+                        }
+
+                        // --- Centralised command state machine ---
+                        LaunchedEffect(ytPlayerRef.value, binder?.youtubeEngine) {
+                            val ytPlayer = ytPlayerRef.value ?: return@LaunchedEffect
+                            val engine = binder?.youtubeEngine ?: return@LaunchedEffect
+
+                            var lastVideoId: String? = null
+                            var lastIsPlaying: Boolean? = null
+                            var lastSeekRequestId: Int = -1
+
+                            engine.playbackState.collect { state ->
+                                val videoId = state.mediaId?.removePrefix("youtube-embed:")
+                                if (videoId.isNullOrBlank()) {
+                                    android.util.Log.d("YouTubePlayerRetained", "Engine state update ignored: no video ID")
+                                    return@collect
+                                }
+
+                                if (videoId != lastVideoId) {
+                                    lastVideoId = videoId
+                                    lastIsPlaying = state.isPlaying
+                                    lastSeekRequestId = state.seekRequestId
+                                    android.util.Log.d("YouTubePlayerRetained", "LOAD videoId=$videoId, autoPlay=${state.isPlaying}, startMs=${state.currentPositionMs}")
+                                    if (state.isPlaying) {
+                                        ytPlayer.loadVideo(videoId, state.currentPositionMs / 1000f)
+                                    } else {
+                                        ytPlayer.cueVideo(videoId, state.currentPositionMs / 1000f)
+                                    }
+                                } else {
+                                    if (state.seekRequestId != lastSeekRequestId) {
+                                        lastSeekRequestId = state.seekRequestId
+                                        android.util.Log.d("YouTubePlayerRetained", "SEEK videoId=$videoId, toMs=${state.currentPositionMs}")
+                                        ytPlayer.seekTo(state.currentPositionMs / 1000f)
+                                    }
+                                    if (state.isPlaying != lastIsPlaying) {
+                                        lastIsPlaying = state.isPlaying
+                                        android.util.Log.d("YouTubePlayerRetained", "PLAY_PAUSE videoId=$videoId, isPlaying=${state.isPlaying}")
+                                        if (state.isPlaying) ytPlayer.play() else ytPlayer.pause()
+                                    }
+                                }
+                            }
+                        }
+
+                        // Build the composable that consumers invoke via LocalYouTubePlayer
+                        val youtubePlayerComposable: (@Composable (Modifier) -> Unit)? =
+                            youtubePlayerView?.let { view ->
+                                @Composable { modifier: Modifier ->
+                                    com.github.musicyou.ui.screens.player.YouTubePlayerSurface(
+                                        retainedView = view,
+                                        modifier = modifier
+                                    )
+                                }
+                            }
+
+                        CompositionLocalProvider(
+                            value = LocalPlayerServiceBinder provides binder,
+                        ) {
+                            CompositionLocalProvider(
+                                value = LocalYouTubePlayer provides youtubePlayerComposable,
+                            ) {
+                                val menuState = LocalMenuState.current
 
                             Scaffold(
                                 bottomBar = {
@@ -306,6 +434,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
 
                 DisposableEffect(binder?.player) {
                     val player = binder?.player ?: return@DisposableEffect onDispose { }
@@ -319,28 +448,61 @@ class MainActivity : ComponentActivity() {
                     }
 
                     val listener = object : Player.Listener {
-                        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                            // Automatically expand the player whenever a song starts playing OR is loaded
-                            if (mediaItem != null) {
-                                scope.launch { playerState.partialExpand() }
-                            }
-                        }
-
-                        override fun onPlaybackStateChanged(playbackState: Int) {
-                            // Also expand when a track is ready (covers paused sessions)
-                            // BUT only if metadata is available to prevent showing empty sheet
-                            if (playbackState == Player.STATE_READY && player.currentMediaItem != null) {
-                                val hasMetadata = player.mediaMetadata.title != null &&
-                                        player.mediaMetadata.title?.isNotEmpty() == true
-                                if (hasMetadata) {
-                                    scope.launch { playerState.partialExpand() }
-                                }
-                            }
-                        }
+                        // Removed visibility logic to prevent ExoPlayer from hiding HybridPlaybackEngine's MiniPlayer
                     }
 
                     player.addListener(listener)
                     onDispose { player.removeListener(listener) }
+                }
+
+                val context = LocalContext.current
+                val prefs = context.preferences
+                
+                LaunchedEffect(binder?.hybridPlaybackEngine, prefs) {
+                    val engine = binder?.hybridPlaybackEngine ?: return@LaunchedEffect
+                    var lastMediaId: String? = null
+                    engine.playbackState.collectLatest { state ->
+                        val currentMediaId = state.mediaId ?: state.mediaItem?.mediaId
+                        if (currentMediaId != null && currentMediaId != lastMediaId) {
+                            lastMediaId = currentMediaId
+                            // Always make sure the MiniPlayer is visible (sheet partially expanded)
+                            scope.launch { playerState.partialExpand() }
+                            
+                            // Automatically jump to fullscreen player when YouTube video is loaded (if setting is enabled)
+                            val autoExpand = prefs.getBoolean(com.github.musicyou.utils.autoExpandYouTubeVideoKey, true)
+                            if (autoExpand && currentMediaId.startsWith("youtube-embed:")) {
+                                scope.launch {
+                                    // Add a small delay to ensure the UI/NavHost is fully resumed and ready to accept navigation.
+                                    // This is especially important for guest sessions receiving asynchronous state sync events.
+                                    kotlinx.coroutines.delay(200)
+                                    android.util.Log.d("ytSync", "MainActivity: Attempting to navigate to FullscreenPlayer for YouTube sync! mediaId=$currentMediaId")
+                                    var retryCount = 0
+                                    while (retryCount < 5) {
+                                        try {
+                                            navController.navigate(com.github.musicyou.ui.navigation.Routes.FullscreenPlayer) {
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                            android.util.Log.d("ytSync", "MainActivity: Successfully navigated to FullscreenPlayer!")
+                                            break
+                                        } catch (e: Exception) {
+                                            retryCount++
+                                            android.util.Log.e("ytSync", "MainActivity: Failed to navigate to FullscreenPlayer, retrying ($retryCount/5)", e)
+                                            kotlinx.coroutines.delay(300)
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (currentMediaId == null) {
+                            lastMediaId = null
+                            scope.launch { 
+                                kotlinx.coroutines.delay(150)
+                                if (engine.playbackState.value.mediaId == null && engine.playbackState.value.mediaItem?.mediaId == null) {
+                                    playerState.hide() 
+                                }
+                            }
+                        }
+                    }
                 }
 
                 LaunchedEffect(data) {
@@ -423,4 +585,5 @@ class MainActivity : ComponentActivity() {
 }
 
 val LocalPlayerServiceBinder = staticCompositionLocalOf<PlayerService.Binder?> { null }
+val LocalYouTubePlayer = staticCompositionLocalOf<(@Composable (Modifier) -> Unit)?> { null }
 val LocalPlayerPadding = compositionLocalOf { 0.dp }

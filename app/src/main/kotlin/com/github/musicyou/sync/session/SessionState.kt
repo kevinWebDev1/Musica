@@ -59,6 +59,9 @@ data class SessionState(
     // DEBUG: URI of the locally matched file (Not synced, local only)
     val localMatchUri: String? = null,
     
+    // UI: Flag to indicate manual match is required
+    val isPendingManualMatch: Boolean = false,
+    
     // NETWORK: Current Ping/RTT in milliseconds (Local only overlay)
     val ping: Long? = null
 ) {

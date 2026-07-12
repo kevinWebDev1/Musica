@@ -31,7 +31,10 @@ data class PlayerResponse(
 
     @Serializable
     data class StreamingData(
-        val adaptiveFormats: List<AdaptiveFormat>?
+        val adaptiveFormats: List<AdaptiveFormat>?,
+        val formats: List<AdaptiveFormat>? = null,
+        val hlsManifestUrl: String? = null,
+        val dashManifestUrl: String? = null
     ) {
         val highestQualityFormat: AdaptiveFormat?
             get() = adaptiveFormats?.findLast { it.itag == 251 || it.itag == 140 }

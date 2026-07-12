@@ -39,13 +39,22 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.SkipNext
+import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -88,11 +97,14 @@ import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import com.github.musicyou.ui.screens.player.components.TrackSelectionSheet
 import com.github.innertube.models.NavigationEndpoint
 import com.github.musicyou.Database
 import com.github.musicyou.LocalPlayerServiceBinder
+import com.github.musicyou.LocalYouTubePlayer
 import com.github.musicyou.R
 import com.github.musicyou.models.LocalMenuState
 import com.github.musicyou.ui.components.BaseMediaItemMenu
@@ -128,32 +140,22 @@ fun Player(
     val binder = LocalPlayerServiceBinder.current
     binder?.player ?: return
 
-    var shouldBePlaying by remember { mutableStateOf(binder.player.shouldBePlaying) }
-    var nullableMediaItem by remember {
-        mutableStateOf(
-            binder.player.currentMediaItem,
-            neverEqualPolicy()
-        )
-    }
+    val hybridPlaybackState by binder.hybridPlaybackEngine.playbackState.collectAsState()
 
-    binder.player.DisposableListener {
-        object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                nullableMediaItem = mediaItem
-            }
+    val nullableMediaItem = hybridPlaybackState.mediaItem ?: binder.player.currentMediaItem
+    
+    val isYouTube = nullableMediaItem?.mediaId?.startsWith("youtube-embed:") == true
 
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                shouldBePlaying = binder.player.shouldBePlaying
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                shouldBePlaying = binder.player.shouldBePlaying
-            }
-        }
-    }
+    val shouldBePlaying = hybridPlaybackState.isPlaying
 
     val mediaItem = nullableMediaItem ?: return
-    val positionAndDuration by binder.player.positionAndDurationState()
+    val exoPositionAndDuration by binder.player.positionAndDurationState()
+    
+    val positionAndDuration = if (isYouTube) {
+        Pair(hybridPlaybackState.currentPositionMs, hybridPlaybackState.durationMs ?: 0L)
+    } else {
+        exoPositionAndDuration
+    }
     val nextSongTitle =
         if (binder.player.hasNextMediaItem()) binder.player.getMediaItemAt(binder.player.nextMediaItemIndex).mediaMetadata.title.toString()
         else stringResource(id = R.string.open_queue)
@@ -171,9 +173,13 @@ fun Player(
     var fullScreenLyrics by remember { mutableStateOf(false) }
     var isShowingStatsForNerds by rememberSaveable { mutableStateOf(false) }
     var isQueueOpen by rememberSaveable { mutableStateOf(false) }
+    var showSubtitlesSheet by rememberSaveable { mutableStateOf(false) }
+    var showAudioSheet by rememberSaveable { mutableStateOf(false) }
     var isShowingSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
     var isShowingSyncSheet by rememberSaveable { mutableStateOf(false) }
     var isShowingSpeedDialog by rememberSaveable { mutableStateOf(false) }
+    var isShowingQualityDialog by rememberSaveable { mutableStateOf(false) }
+    var videoQuality by com.github.musicyou.utils.rememberPreference(com.github.musicyou.utils.videoQualityKey, com.github.musicyou.enums.VideoQuality.AUTO)
     
     // Collect sync session state for Host-Only Mode and Status UI
     val syncSessionState by binder.sessionManager.sessionState.collectAsState()
@@ -192,7 +198,12 @@ fun Player(
         .collectAsState(initial = null)
 
     var isFullScreen by rememberSaveable { mutableStateOf(false) }
+    var isLocked by rememberSaveable { mutableStateOf(false) }
     var areControlsVisible by remember { mutableStateOf(false) }
+    
+    val availableSpeeds = listOf(1f, 1.25f, 1.5f, 2f, 3f, 5f)
+    var baselineSpeed by rememberSaveable { mutableStateOf(1f) }
+    var activeSpeed by rememberSaveable { mutableStateOf(1f) }
     var isSpeedGestureActive by remember { mutableStateOf(false) }
 
     LaunchedEffect(areControlsVisible, isFullScreen) {
@@ -214,8 +225,29 @@ fun Player(
         if (isFullScreen) {
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
             insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+
+            val sharedPreferences = context.getSharedPreferences("preferences", android.content.Context.MODE_PRIVATE)
+            val defaultFullscreenOrientation = sharedPreferences.getInt(com.github.musicyou.utils.defaultFullscreenOrientationKey, 0)
+            activity.requestedOrientation = when (defaultFullscreenOrientation) {
+                1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                2 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            }
         } else {
             insetsController.show(WindowInsetsCompat.Type.systemBars())
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                }
+            }
         }
 
         onDispose {
@@ -228,6 +260,7 @@ fun Player(
     DisposableEffect(Unit) {
          val activity = context.findActivity()
          onDispose {
+             activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
              activity?.window?.let { window ->
                  WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.systemBars())
              }
@@ -487,12 +520,19 @@ fun Player(
 
 
 
+        val isYouTube = remember(mediaItem) {
+            mediaItem.mediaId.startsWith("youtube-embed:")
+        }
         val isVideo = remember(mediaItem, syncSessionState.localMatchUri) {
             val path = syncSessionState.localMatchUri ?: mediaItem.mediaId
-            path.endsWith(".mp4", ignoreCase = true) ||
+            val isVid = path.endsWith(".mp4", ignoreCase = true) ||
                     path.endsWith(".mkv", ignoreCase = true) ||
                     path.endsWith(".mov", ignoreCase = true) ||
-                    path.contains("video", ignoreCase = true)
+                    path.contains("video", ignoreCase = true) ||
+                    mediaItem.mediaMetadata.extras?.getBoolean("forceVideo") == true
+            
+            android.util.Log.d("YouTubeSearch", "Player.kt computed isVideo=$isVid for mediaId=${mediaItem.mediaId}, path=$path, forceVideo=${mediaItem.mediaMetadata.extras?.getBoolean("forceVideo")}")
+            isVid
         }
 
         Column(
@@ -515,22 +555,27 @@ fun Player(
                                 .weight(if (isFullScreen) 1f else 0.66f)
                                 .padding(bottom = if (isFullScreen) 0.dp else 16.dp)
                         ) {
-                            if (isVideo) {
-                                Box(contentAlignment = Alignment.BottomEnd) {
-                                    VideoSurface(
-                                        player = binder.player,
+                            if (isYouTube) {
+                                Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
+                                    YouTubeGestureSurface(
                                         modifier = Modifier.fillMaxSize(),
                                         onTap = { areControlsVisible = !areControlsVisible },
-                                        onGestureActive = { isSpeedGestureActive = it },
-                                        onRewindEnd = { binder.syncSeekTo(binder.player.currentPosition) },
                                         onSeek = { binder.syncSeekTo(it) },
-                                        onPlayPause = {
-                                            if (shouldBePlaying) binder.syncPause()
-                                            else binder.syncPlay()
-                                        },
-                                        onSpeedChange = { binder.player.setPlaybackSpeed(it) }
-                                    )
-                                    if (!isFullScreen) {
+                                        durationMs = positionAndDuration.second,
+                                        currentPositionMs = positionAndDuration.first,
+                                        isLocked = isLocked,
+                                        onLockedChange = { 
+                                            isLocked = it
+                                            if (!it) areControlsVisible = true
+                                        }
+                                    ) {
+                                        val youtubePlayer = LocalYouTubePlayer.current
+                                        if (youtubePlayer != null) {
+                                            youtubePlayer(Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    
+                                    if (!isFullScreen && areControlsVisible && !isLocked) {
                                         Row(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -542,7 +587,7 @@ fun Player(
                                                     if (activity != null) {
                                                         if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
                                                             activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                                                         } else {
                                                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                                         }
@@ -567,6 +612,141 @@ fun Player(
                                                 Icon(
                                                     imageVector = Icons.Outlined.Fullscreen,
                                                     contentDescription = "Enter Fullscreen",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Lock Button
+                                            IconButton(
+                                                onClick = { isLocked = !isLocked },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
+                                                    contentDescription = "Lock",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (isVideo) {
+                                Box(contentAlignment = Alignment.BottomEnd) {
+                                    android.util.Log.d("YouTubeSearch", "Rendering VideoSurface (Landscape)")
+                                    VideoSurface(
+                                        player = binder.player,
+                                        modifier = Modifier.fillMaxSize(),
+                                        onTap = { areControlsVisible = !areControlsVisible },
+                                        onGestureActive = { isSpeedGestureActive = it },
+                                        onRewindEnd = { binder.syncSeekTo(binder.player.currentPosition) },
+                                        onSeek = { binder.syncSeekTo(it) },
+                                        onPlayPause = {
+                                            if (shouldBePlaying) binder.syncPause()
+                                            else binder.syncPlay()
+                                        },
+                                        onSpeedChange = { 
+                                            activeSpeed = it
+                                            binder.player.setPlaybackSpeed(it) 
+                                        },
+                                        isLocked = isLocked,
+                                        onLockedChange = { 
+                                            isLocked = it
+                                            if (!it) areControlsVisible = true
+                                        },
+                                        baselineSpeed = baselineSpeed
+                                    )
+                                    if (!isFullScreen) {
+                                        Row(
+                                            modifier = Modifier.padding(8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            // Rotation Button
+                                            IconButton(
+                                                onClick = { 
+                                                    val activity = context.findActivity()
+                                                    if (activity != null) {
+                                                        if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
+                                                            activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                        } else {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ScreenRotation,
+                                                    contentDescription = "Rotate Screen",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                            
+                                            // Fullscreen Button
+                                            IconButton(
+                                                onClick = { isFullScreen = true },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Fullscreen,
+                                                    contentDescription = "Enter Fullscreen",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Speed Toggle
+                                            IconButton(
+                                                onClick = {
+                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
+                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
+                                                    baselineSpeed = availableSpeeds[nextIndex]
+                                                    activeSpeed = baselineSpeed
+                                                    binder.player.setPlaybackSpeed(baselineSpeed)
+                                                },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Text(
+                                                    text = "${baselineSpeed}x",
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            // Lock Button
+                                            IconButton(
+                                                onClick = { isLocked = !isLocked },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
+                                                    contentDescription = "Lock",
                                                     tint = Color.White
                                                 )
                                             }
@@ -602,8 +782,88 @@ fun Player(
                                 else 1.25f
                             )
                         ) {
-                            if (isVideo) {
-                                Box(contentAlignment = Alignment.BottomEnd) {
+                            if (isYouTube) {
+                                Box {
+                                    YouTubeGestureSurface(
+                                        modifier = if (isFullScreen) Modifier.fillMaxSize() else Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                        onTap = { areControlsVisible = !areControlsVisible },
+                                        onSeek = { binder.syncSeekTo(it) },
+                                        durationMs = positionAndDuration.second,
+                                        currentPositionMs = positionAndDuration.first,
+                                        isLocked = isLocked,
+                                        onLockedChange = { 
+                                            isLocked = it
+                                            if (!it) areControlsVisible = true
+                                        }
+                                    ) {
+                                        val youtubePlayer = LocalYouTubePlayer.current
+                                        if (youtubePlayer != null) {
+                                            youtubePlayer(Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    
+                                    if (!isFullScreen && areControlsVisible && !isLocked) {
+                                        // Bottom Right Controls (Rotate, Lock, Fullscreen)
+                                        Row(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(bottom = 16.dp, end = 24.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            // Rotation Button
+                                            IconButton(
+                                                onClick = { 
+                                                    val activity = context.findActivity()
+                                                    if (activity != null) {
+                                                        if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
+                                                            activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                        } else {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ScreenRotation,
+                                                    contentDescription = "Rotate Screen",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Lock Button
+                                            IconButton(
+                                                onClick = { isLocked = !isLocked },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
+                                                    contentDescription = "Lock",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Fullscreen Button
+                                            IconButton(
+                                                onClick = { isFullScreen = true },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Fullscreen,
+                                                    contentDescription = "Enter Fullscreen",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (isVideo) {
+                                Box {
+                                    android.util.Log.d("YouTubeSearch", "Rendering VideoSurface (Portrait)")
                                     VideoSurface(
                                         player = binder.player,
                                         modifier = if (isFullScreen) Modifier.fillMaxSize() else Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -615,20 +875,146 @@ fun Player(
                                             if (shouldBePlaying) binder.syncPause()
                                             else binder.syncPlay()
                                         },
-                                        onSpeedChange = { binder.player.setPlaybackSpeed(it) }
+                                        onSpeedChange = { 
+                                            activeSpeed = it
+                                            binder.player.setPlaybackSpeed(it) 
+                                        },
+                                        isLocked = isLocked,
+                                        onLockedChange = { 
+                                            isLocked = it
+                                            if (!it) areControlsVisible = true
+                                        },
+                                        baselineSpeed = baselineSpeed
                                     )
                                     if (!isFullScreen) {
-                                        IconButton(
-                                            onClick = { isFullScreen = true },
+                                        // Top Right Controls (Subtitles, Audio)
+                                        Row(
                                             modifier = Modifier
-                                                .padding(if (isFullScreen) 16.dp else 24.dp)
-                                                .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                                .align(Alignment.TopEnd)
+                                                .padding(top = 16.dp, end = 24.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Fullscreen,
-                                                contentDescription = "Enter Fullscreen",
-                                                tint = Color.White
-                                            )
+                                            // Subtitles
+                                            IconButton(
+                                                onClick = { showSubtitlesSheet = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Subtitles,
+                                                    contentDescription = "Subtitles",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                            
+                                            // Audio Track
+                                            IconButton(
+                                                onClick = { showAudioSheet = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Audiotrack,
+                                                    contentDescription = "Audio Track",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                        }
+
+                                        // Bottom Right Controls (Rotate, Lock, Fullscreen)
+                                        Row(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(bottom = 16.dp, end = 24.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            // Rotation Button
+                                            IconButton(
+                                                onClick = { 
+                                                    val activity = context.findActivity()
+                                                    if (activity != null) {
+                                                        if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
+                                                            activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                        } else {
+                                                            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ScreenRotation,
+                                                    contentDescription = "Rotate Screen",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Speed Toggle
+                                            IconButton(
+                                                onClick = {
+                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
+                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
+                                                    baselineSpeed = availableSpeeds[nextIndex]
+                                                    activeSpeed = baselineSpeed
+                                                    binder.player.setPlaybackSpeed(baselineSpeed)
+                                                },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Text(
+                                                    text = "${baselineSpeed}x",
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            // Lock Button
+                                            IconButton(
+                                                onClick = { isLocked = !isLocked },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
+                                                    contentDescription = "Lock",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Fullscreen Button
+                                            IconButton(
+                                                onClick = { isFullScreen = true },
+                                                modifier = Modifier
+                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Fullscreen,
+                                                    contentDescription = "Enter Fullscreen",
+                                                    tint = Color.White
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -651,13 +1037,36 @@ fun Player(
                 }
 
                 // Fullscreen Overlay Controls
-                if (isFullScreen && (areControlsVisible || isSpeedGestureActive)) {
+                if (isFullScreen && (areControlsVisible || isSpeedGestureActive) && !isLocked) {
                     FullscreenControls(
                         areControlsVisible = areControlsVisible || isSpeedGestureActive,
-                        player = binder.player,
+                        isPlaying = shouldBePlaying,
                         onExitFullscreen = { isFullScreen = false },
                         position = positionAndDuration.first,
-                        duration = positionAndDuration.second
+                        duration = positionAndDuration.second,
+                        onShowSubtitles = { showSubtitlesSheet = true },
+                        onShowAudio = { showAudioSheet = true },
+                        onLockClick = { 
+                            isLocked = true 
+                            areControlsVisible = false
+                        },
+                        activeSpeed = activeSpeed,
+                        onCycleSpeed = {
+                            val currentIndex = availableSpeeds.indexOf(baselineSpeed)
+                            val nextIndex = (currentIndex + 1) % availableSpeeds.size
+                            baselineSpeed = availableSpeeds[nextIndex]
+                            activeSpeed = baselineSpeed
+                            binder.player.setPlaybackSpeed(baselineSpeed)
+                        },
+                        onShowQuality = { isShowingQualityDialog = true },
+                        videoQualityText = when (videoQuality) {
+                            com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                            com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                            com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                            com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                            com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                            com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                        }
                     )
                 }
             }
@@ -720,6 +1129,7 @@ fun Player(
                              maxLines = 1
                          )
                     }
+
 
                     // Smart Local Source Indicator
                     val hasLocalMatch = syncSessionState.localMatchUri != null
@@ -784,6 +1194,54 @@ fun Player(
             SleepTimer(
                 sleepTimerMillisLeft = sleepTimerMillisLeft,
                 onDismiss = { isShowingSleepTimerDialog = false }
+            )
+        }
+        
+        if (isShowingQualityDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { isShowingQualityDialog = false },
+                title = { Text(text = "Video Quality") },
+                text = {
+                    Column {
+                        val qualities = com.github.musicyou.enums.VideoQuality.values().toList()
+                        qualities.forEach { quality ->
+                            TextButton(
+                                onClick = {
+                                    videoQuality = quality
+                                    val currentPos = binder.player.currentPosition
+                                    val currentMediaItem = binder.player.currentMediaItem
+                                    if (currentMediaItem != null) {
+                                        binder.player.setMediaItem(currentMediaItem)
+                                        binder.player.seekTo(currentPos)
+                                        binder.player.prepare()
+                                        binder.player.play()
+                                    }
+                                    isShowingQualityDialog = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val text = when (quality) {
+                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                }
+                                Text(
+                                    text = text,
+                                    fontWeight = if (videoQuality == quality) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (videoQuality == quality) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { isShowingQualityDialog = false }) {
+                        Text(text = stringResource(android.R.string.cancel))
+                    }
+                }
             )
         }
         
@@ -869,10 +1327,33 @@ fun Player(
             }
         }
         
+        if (showSubtitlesSheet) {
+            TrackSelectionSheet(
+                title = "Subtitles",
+                player = binder.player,
+                trackType = androidx.media3.common.C.TRACK_TYPE_TEXT,
+                onDismiss = { showSubtitlesSheet = false }
+            )
+        }
+
+        if (showAudioSheet) {
+            TrackSelectionSheet(
+                title = "Audio Track",
+                player = binder.player,
+                trackType = androidx.media3.common.C.TRACK_TYPE_AUDIO,
+                onDismiss = { showAudioSheet = false }
+            )
+        }
+        
         // SOCIAL: Top layer (Floating Emojis & Cards)
         Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
             ReactionOverlay(event = lastReaction)
             FlashMessageOverlay(event = lastFlashMessage)
+            
+            ManualMatchOverlay(
+                sessionState = syncSessionState,
+                sessionManager = binder.sessionManager
+            )
         }
     }
 }
@@ -952,10 +1433,17 @@ fun Modifier.scale(scale: Float): Modifier = this.then(
 @Composable
 fun FullscreenControls(
     areControlsVisible: Boolean,
-    player: Player,
+    isPlaying: Boolean,
     onExitFullscreen: () -> Unit,
     position: Long,
     duration: Long,
+    onShowSubtitles: () -> Unit,
+    onShowAudio: () -> Unit,
+    onLockClick: () -> Unit,
+    activeSpeed: Float,
+    onCycleSpeed: () -> Unit,
+    onShowQuality: () -> Unit,
+    videoQualityText: String,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -970,7 +1458,7 @@ fun FullscreenControls(
                     Color.Black.copy(alpha = 0.8f)
                 )
             ))
-            .padding(16.dp)
+            .padding(top = 48.dp, start = 16.dp, end = 16.dp, bottom = 16.dp) // Added top margin for vertical fullscreen
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
         // TOP RIGHT ACTIONS
@@ -978,6 +1466,61 @@ fun FullscreenControls(
             modifier = Modifier.align(Alignment.TopEnd),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Subtitles
+            IconButton(
+                onClick = onShowSubtitles,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Subtitles,
+                    contentDescription = "Subtitles",
+                    tint = Color.White
+                )
+            }
+            
+            // Audio Track
+            IconButton(
+                onClick = onShowAudio,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Audiotrack,
+                    contentDescription = "Audio Track",
+                    tint = Color.White
+                )
+            }
+
+            // Exit Fullscreen
+            IconButton(
+                onClick = onExitFullscreen,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FullscreenExit,
+                    contentDescription = "Exit Fullscreen",
+                    tint = Color.White
+                )
+            }
+        }
+        
+        // BOTTOM RIGHT ACTIONS
+        Row(
+            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 56.dp), // Position above the seekbar
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Quality Toggle
+            IconButton(
+                onClick = onShowQuality,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Text(
+                    text = videoQualityText,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
             // Rotation
             IconButton(
                 onClick = { 
@@ -985,7 +1528,7 @@ fun FullscreenControls(
                      if (activity != null) {
                          if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
                              activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                          } else {
                              activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                          }
@@ -999,19 +1542,69 @@ fun FullscreenControls(
                     tint = Color.White
                 )
             }
-            // Exit
+
+            // Speed Toggle
             IconButton(
-                onClick = onExitFullscreen,
+                onClick = onCycleSpeed,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Text(
+                    text = "${activeSpeed}x",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Lock Screen
+            IconButton(
+                onClick = onLockClick,
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.FullscreenExit,
-                    contentDescription = "Exit Fullscreen",
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = "Lock Controls",
                     tint = Color.White
                 )
             }
         }
         
+        // CENTER CONTROLS
+        val binder = LocalPlayerServiceBinder.current
+        if (binder != null) {
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { binder.syncSkipPrevious() },
+                    modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+                ) {
+                    Icon(imageVector = Icons.Outlined.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+                
+                IconButton(
+                    onClick = { if (isPlaying) binder.syncPause() else binder.syncPlay() },
+                    modifier = Modifier.size(80.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = "Play/Pause", 
+                        tint = Color.White, 
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { binder.syncSkipNext() },
+                    modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+                ) {
+                    Icon(imageVector = Icons.Outlined.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+            }
+        }
+
         // BOTTOM SEEKBAR
         Column(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -1036,7 +1629,7 @@ fun FullscreenControls(
              Slider(
                  value = if (duration > 0) position.toFloat() / duration.toFloat() else 0f,
                  onValueChange = { ratio ->
-                     player.seekTo((ratio * duration).toLong())
+                     binder?.syncSeekTo((ratio * duration).toLong())
                  },
                  colors = SliderDefaults.colors(
                      thumbColor = Color.White,
@@ -1112,5 +1705,65 @@ fun ThinSwitch(
                 .clip(CircleShape)
                 .background(thumbColor)
         )
+    }
+}
+
+@Composable
+fun ManualMatchOverlay(
+    sessionState: com.github.musicyou.sync.session.SessionState,
+    sessionManager: com.github.musicyou.sync.session.SessionManager
+) {
+    if (!sessionState.isPendingManualMatch) return
+
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            sessionManager.setManualMatchUri(uri.toString())
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.8f))
+            .pointerInput(Unit) { // Block touches from passing through
+                detectTapGestures { } 
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = "Match Required",
+                tint = Color.Yellow,
+                modifier = Modifier.size(64.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Manual Match Required",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "A local file was played but couldn't be matched automatically. Please select it from your device.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.LightGray,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            androidx.compose.material3.Button(
+                onClick = { launcher.launch("*/*") },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Icon(Icons.Filled.Folder, contentDescription = "Select File")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Select Local File")
+            }
+        }
     }
 }

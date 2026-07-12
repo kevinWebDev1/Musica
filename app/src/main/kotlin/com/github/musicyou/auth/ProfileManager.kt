@@ -753,6 +753,47 @@ suspend fun getPublicProfile(uid: String): Result<PublicProfile> = coroutineScop
 }
 
     /**
+     * Searches for users by their username prefix.
+     * Limits to top 10 results.
+     */
+    suspend fun searchUsers(query: String): Result<List<PublicProfile>> = coroutineScope {
+        val user = auth.currentUser ?: return@coroutineScope Result.failure(Exception("User not logged in"))
+        val normalized = query.lowercase().trim().removePrefix("@")
+        
+        if (normalized.isEmpty()) {
+            return@coroutineScope Result.success(emptyList())
+        }
+        
+        try {
+            val snapshot = firestore.collection(USERS_COLLECTION)
+                .whereGreaterThanOrEqualTo("username", normalized)
+                .whereLessThanOrEqualTo("username", normalized + "\uf8ff")
+                .limit(10)
+                .get()
+                .await()
+                
+            val profiles = snapshot.documents.mapNotNull { doc ->
+                // Don't include the current user in search results
+                if (doc.id == user.uid) return@mapNotNull null
+                
+                PublicProfile(
+                    uid = doc.id,
+                    displayName = doc.getString("displayName") ?: "Unknown",
+                    username = doc.getString("username") ?: "unknown",
+                    photoUrl = doc.getString("photoUrl"),
+                    country = doc.getString("region"),
+                    favoriteGenres = (doc.get("vibes") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                    bio = doc.getString("bio")
+                )
+            }
+            
+            Result.success(profiles)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Gets the current user's UID safely.
      */
     fun getCurrentUserUid(): String? = auth.currentUser?.uid

@@ -219,6 +219,7 @@ class PlayerMediaBrowserService : MediaBrowserService(), ServiceConnection {
         )
 
     @OptIn(UnstableApi::class)
+    @android.annotation.SuppressLint("MissingOnPlayFromSearch")
     private inner class SessionCallback(private val player: Player, private val cache: Cache) :
         MediaSession.Callback() {
         override fun onPlay() = player.play()

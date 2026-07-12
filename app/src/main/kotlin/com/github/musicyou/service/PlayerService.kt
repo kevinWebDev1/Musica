@@ -181,6 +181,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     private val coroutineScope = CoroutineScope(Dispatchers.IO) + Job()
 
+    lateinit var youtubePlaybackEngine: com.github.musicyou.sync.playback.YouTubePlaybackEngine
+        private set
+
+    lateinit var hybridPlaybackEngine: com.github.musicyou.sync.playback.HybridPlaybackEngine
+        private set
+
     private var volumeNormalizationJob: Job? = null
 
     private var isPersistentQueueEnabled = false
@@ -305,14 +311,20 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             .build()
             
         // Wrap ExoPlayer
-        val playbackEngine = com.github.musicyou.sync.playback.ExoPlayerPlaybackEngine(this, player)
+        val exoPlayerPlaybackEngine = com.github.musicyou.sync.playback.ExoPlayerPlaybackEngine(this, player)
+        youtubePlaybackEngine = com.github.musicyou.sync.playback.YouTubePlaybackEngine()
+        hybridPlaybackEngine = com.github.musicyou.sync.playback.HybridPlaybackEngine(
+            exoPlayerPlaybackEngine,
+            youtubePlaybackEngine,
+            coroutineScope
+        )
         
         // Initialize SessionManager
         // Initialize SessionManager
         sessionManager = com.github.musicyou.sync.session.SessionManager(
             applicationContext,
             timeSyncEngine,
-            playbackEngine,
+            hybridPlaybackEngine,
             transportManager, // Inject Transport
             coroutineScope
         )
@@ -414,7 +426,11 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         
         // Provider returns cached values (safe to call from any thread)
         sessionManager.setMetadataProvider {
-            Triple(cachedTitle, cachedArtist, cachedThumbnailUrl)
+            val currentMediaItem = hybridPlaybackEngine.playbackState.value.mediaItem ?: player.currentMediaItem
+            val title = currentMediaItem?.mediaMetadata?.title?.toString() ?: cachedTitle
+            val artist = currentMediaItem?.mediaMetadata?.artist?.toString() ?: cachedArtist
+            val thumbnailUrl = currentMediaItem?.mediaMetadata?.artworkUri?.toString() ?: cachedThumbnailUrl
+            Triple(title, artist, thumbnailUrl)
         }
         
         // Setup name provider to include user name in sync events
@@ -594,6 +610,32 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 }
                 coroutineScope.launch {
                     com.github.musicyou.auth.SyncManager.backupHistory()
+                }
+            }
+        }
+    }
+
+    override fun onPlayerError(error: PlaybackException) {
+        super.onPlayerError(error)
+        
+        val cause = error.cause?.cause
+        if (cause is LoginRequiredException || cause is VideoIdMismatchException) {
+            val mediaItem = player.currentMediaItem
+            if (mediaItem != null && !mediaItem.mediaId.startsWith("youtube-embed:")) {
+                android.util.Log.d("HybridEngine", "ExoPlayer failed with ${cause::class.simpleName}, falling back to HybridPlaybackEngine for ${mediaItem.mediaId}")
+                val currentPosition = player.currentPosition
+                val playWhenReady = player.playWhenReady
+                
+                val youtubeMediaItem = mediaItem.buildUpon()
+                    .setMediaId("youtube-embed:${mediaItem.mediaId}")
+                    .build()
+                
+                // Clear the error in ExoPlayer by stopping it, so UI doesn't get stuck on the error screen
+                player.stop()
+                player.clearMediaItems()
+                
+                coroutineScope.launch(Dispatchers.Main) {
+                    hybridPlaybackEngine.loadMediaItem(youtubeMediaItem, currentPosition, playWhenReady)
                 }
             }
         }
@@ -1071,56 +1113,153 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                     ringBuffer.getOrNull(1)?.first -> dataSpec.withUri(ringBuffer.getOrNull(1)!!.second)
                     else -> {
                         val urlResult = runBlocking(Dispatchers.IO) {
+                            android.util.Log.d("PlayerService", "Resolving stream for videoId: $videoId")
                             Innertube.player(videoId = videoId)
                         }?.mapCatching { body ->
+                            android.util.Log.d("PlayerService", "Received player response for $videoId. Status: ${body.playabilityStatus?.status}")
+                            
+                            if (body.playabilityStatus?.status == "LOGIN_REQUIRED") {
+                                android.util.Log.w("PlayerService", "Login required for videoId: $videoId. Throwing LoginRequiredException to trigger fallback.")
+                                throw LoginRequiredException()
+                            }
+                            
                             if (body.videoDetails?.videoId != videoId) {
+                                android.util.Log.e("PlayerService", "VideoId mismatch: expected $videoId, got ${body.videoDetails?.videoId}")
                                 throw VideoIdMismatchException()
                             }
 
                             when (val status = body.playabilityStatus?.status) {
-                                "OK" -> body.streamingData?.highestQualityFormat?.let { format ->
+                                "OK" -> {
                                     val mediaItem = runBlocking(Dispatchers.Main) {
                                         player.findNextMediaItemById(videoId)
                                     }
+                                    val forceVideo = mediaItem?.mediaMetadata?.extras?.getBoolean("forceVideo") == true
+                                    val videoQualityPref = applicationContext.preferences.getEnum(
+                                        com.github.musicyou.utils.videoQualityKey,
+                                        com.github.musicyou.enums.VideoQuality.AUTO
+                                    )
+                                    if (forceVideo) {
+                                        val (maxW, maxH) = when (videoQualityPref) {
+                                            com.github.musicyou.enums.VideoQuality.QUALITY_360P -> 640 to 360
+                                            com.github.musicyou.enums.VideoQuality.QUALITY_720P -> 1280 to 720
+                                            com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> 1920 to 1080
+                                            com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> 2560 to 1440
+                                            com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> 3840 to 2160
+                                            else -> Int.MAX_VALUE to Int.MAX_VALUE
+                                        }
+                                        runBlocking(Dispatchers.Main) {
+                                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                                .setMaxVideoSize(maxW, maxH)
+                                                .build()
+                                        }
+                                    }
 
-                                    if (mediaItem?.mediaMetadata?.extras?.getString("durationText") == null) {
-                                        format.approxDurationMs?.div(1000)
-                                            ?.let(DateUtils::formatElapsedTime)?.removePrefix("0")
-                                            ?.let { durationText ->
-                                                mediaItem?.mediaMetadata?.extras?.putString(
-                                                    "durationText",
-                                                    durationText
+                                    val hlsUrl = body.streamingData?.hlsManifestUrl
+                                    
+                                    val finalUrl = if (forceVideo && hlsUrl != null) {
+                                        val fmt = body.streamingData?.highestQualityFormat
+                                        if (mediaItem?.mediaMetadata?.extras?.getString("durationText") == null && fmt != null) {
+                                            fmt.approxDurationMs?.div(1000)
+                                                ?.let(DateUtils::formatElapsedTime)?.removePrefix("0")
+                                                ?.let { durationText ->
+                                                    mediaItem?.mediaMetadata?.extras?.putString(
+                                                        "durationText",
+                                                        durationText
+                                                    )
+                                                    Database.updateDurationText(videoId, durationText)
+                                                }
+                                        }
+                                        query {
+                                            mediaItem?.let(Database::insert)
+                                            if (fmt != null) {
+                                                Database.insert(
+                                                    com.github.musicyou.models.Format(
+                                                        songId = videoId,
+                                                        itag = fmt.itag,
+                                                        mimeType = "application/x-mpegURL",
+                                                        bitrate = fmt.bitrate,
+                                                        loudnessDb = body.playerConfig?.audioConfig?.normalizedLoudnessDb,
+                                                        contentLength = fmt.contentLength,
+                                                        lastModified = fmt.lastModified
+                                                    )
                                                 )
-                                                Database.updateDurationText(videoId, durationText)
                                             }
+                                        }
+                                        hlsUrl
+                                    } else {
+                                        val format = if (forceVideo) {
+                                            when (videoQualityPref) {
+                                                com.github.musicyou.enums.VideoQuality.QUALITY_360P -> 
+                                                    body.streamingData?.formats?.find { it.itag == 18 }
+                                                        ?: body.streamingData?.highestQualityFormat
+                                                com.github.musicyou.enums.VideoQuality.QUALITY_720P -> 
+                                                    body.streamingData?.formats?.find { it.itag == 22 }
+                                                        ?: body.streamingData?.formats?.find { it.itag == 18 }
+                                                        ?: body.streamingData?.highestQualityFormat
+                                                else -> 
+                                                    body.streamingData?.formats?.find { it.itag == 22 || it.itag == 18 }
+                                                        ?: body.streamingData?.highestQualityFormat
+                                            }
+                                        } else {
+                                            body.streamingData?.highestQualityFormat
+                                        }
+
+                                        format?.let { fmt ->
+                                            android.util.Log.d("PlayerService", "Found format: itag=${fmt.itag}, mimeType=${fmt.mimeType}, url=${fmt.url}, forceVideo=$forceVideo")
+
+                                            if (mediaItem?.mediaMetadata?.extras?.getString("durationText") == null) {
+                                                fmt.approxDurationMs?.div(1000)
+                                                    ?.let(DateUtils::formatElapsedTime)?.removePrefix("0")
+                                                    ?.let { durationText ->
+                                                        mediaItem?.mediaMetadata?.extras?.putString(
+                                                            "durationText",
+                                                            durationText
+                                                        )
+                                                        Database.updateDurationText(videoId, durationText)
+                                                    }
+                                            }
+
+                                            query {
+                                                mediaItem?.let(Database::insert)
+
+                                                Database.insert(
+                                                    com.github.musicyou.models.Format(
+                                                        songId = videoId,
+                                                        itag = fmt.itag,
+                                                        mimeType = fmt.mimeType,
+                                                        bitrate = fmt.bitrate,
+                                                        loudnessDb = body.playerConfig?.audioConfig?.normalizedLoudnessDb,
+                                                        contentLength = fmt.contentLength,
+                                                        lastModified = fmt.lastModified
+                                                    )
+                                                )
+                                            }
+                                            fmt.url
+                                        }
                                     }
-
-                                    query {
-                                        mediaItem?.let(Database::insert)
-
-                                        Database.insert(
-                                            com.github.musicyou.models.Format(
-                                                songId = videoId,
-                                                itag = format.itag,
-                                                mimeType = format.mimeType,
-                                                bitrate = format.bitrate,
-                                                loudnessDb = body.playerConfig?.audioConfig?.normalizedLoudnessDb,
-                                                contentLength = format.contentLength,
-                                                lastModified = format.lastModified
-                                            )
-                                        )
+                                    
+                                    finalUrl ?: run {
+                                        android.util.Log.e("PlayerService", "No playable format found for $videoId in streamingData")
+                                        throw PlayableFormatNotFoundException()
                                     }
+                                }
 
-                                    format.url
-                                } ?: throw PlayableFormatNotFoundException()
-
-                                "UNPLAYABLE" -> throw UnplayableException()
-                                "LOGIN_REQUIRED" -> throw LoginRequiredException()
-                                else -> throw PlaybackException(
-                                    status,
-                                    null,
-                                    PlaybackException.ERROR_CODE_REMOTE_ERROR
-                                )
+                                "UNPLAYABLE" -> {
+                                    android.util.Log.e("PlayerService", "Video $videoId is UNPLAYABLE")
+                                    throw UnplayableException()
+                                }
+                                "LOGIN_REQUIRED" -> {
+                                    android.util.Log.e("PlayerService", "Video $videoId requires login")
+                                    throw LoginRequiredException()
+                                }
+                                else -> {
+                                    android.util.Log.e("PlayerService", "Playback exception for $videoId: status=$status")
+                                    throw PlaybackException(
+                                        status,
+                                        null,
+                                        PlaybackException.ERROR_CODE_REMOTE_ERROR
+                                    )
+                                }
                             }
                         }
 
@@ -1173,7 +1312,8 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                     handler,
                     videoListener,
                     50
-                )
+                ),
+                io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegAudioRenderer(handler, audioListener, audioSink)
             )
         }
     }
@@ -1181,6 +1321,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     inner class Binder : AndroidBinder() {
         val player: ExoPlayer
             get() = this@PlayerService.player
+
+        val youtubeEngine: com.github.musicyou.sync.playback.YouTubePlaybackEngine
+            get() = this@PlayerService.youtubePlaybackEngine
+
+        val hybridPlaybackEngine: com.github.musicyou.sync.playback.HybridPlaybackEngine
+            get() = this@PlayerService.hybridPlaybackEngine
 
         val cache: Cache
             get() = this@PlayerService.cache
@@ -1277,7 +1423,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 android.util.Log.d("MusicSync", "syncPlay: No sync active, direct play")
                 if (player.playbackState == Player.STATE_IDLE) player.prepare()
                 else if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
-                player.play()
+                hybridPlaybackEngine.play()
             }
         }
         
@@ -1291,7 +1437,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 sessionManager.pause()
             } else {
                 android.util.Log.d("MusicSync", "syncPause: No sync active, direct pause")
-                player.pause()
+                hybridPlaybackEngine.pause()
             }
         }
         
@@ -1305,7 +1451,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 sessionManager.seekTo(positionMs)
             } else {
                 android.util.Log.d("MusicSync", "syncSeekTo: No sync active, direct seek")
-                player.seekTo(positionMs)
+                hybridPlaybackEngine.seekTo(positionMs)
             }
         }
         
@@ -1436,7 +1582,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             android.util.Log.d("MusicSync", "play: No sync active, direct play")
             if (player.playbackState == Player.STATE_IDLE) player.prepare()
             else if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(0)
-            player.play()
+            hybridPlaybackEngine.play()
         }
     }
 
@@ -1447,7 +1593,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
                 sessionManager.pause()
             } else {
-                player.pause()
+                hybridPlaybackEngine.pause()
             }
         }
         override fun onSkipToPrevious() {
@@ -1476,14 +1622,14 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
                 sessionManager.seekTo(pos)
             } else {
-                player.seekTo(pos)
+                hybridPlaybackEngine.seekTo(pos)
             }
         }
         override fun onStop() {
             if (::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
                 sessionManager.pause()
             } else {
-                player.pause()
+                hybridPlaybackEngine.pause()
             }
         }
         override fun onRewind() = player.seekToDefaultPosition()

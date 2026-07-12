@@ -11,6 +11,8 @@ import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.filled.VideoLibrary
 import com.github.musicyou.R
 
 object TopDestinations {
@@ -28,16 +30,16 @@ object TopDestinations {
             selectedIcon = Icons.Filled.MusicNote
         ),
         TopDestination(
+            route = Routes.Videos,
+            resourceId = R.string.videos,
+            unselectedIcon = Icons.Outlined.VideoLibrary,
+            selectedIcon = Icons.Filled.VideoLibrary
+        ),
+        TopDestination(
             route = Routes.Artists,
             resourceId = R.string.artists,
             unselectedIcon = Icons.Outlined.Person,
             selectedIcon = Icons.Filled.Person
-        ),
-        TopDestination(
-            route = Routes.Albums,
-            resourceId = R.string.albums,
-            unselectedIcon = Icons.Outlined.Album,
-            selectedIcon = Icons.Filled.Album
         ),
         TopDestination(
             route = Routes.Playlists,

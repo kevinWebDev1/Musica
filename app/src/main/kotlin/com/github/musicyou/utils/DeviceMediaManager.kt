@@ -131,7 +131,7 @@ object DeviceMediaManager {
         val targetTitle = fingerprint.title.lowercase().trim()
         val durationDelta = 1000L // 1 second tolerance
 
-        android.util.Log.d("Local_Media_Sync", "DeviceMediaManager: Matching media - Title='$targetTitle', Dur=$targetDuration ms")
+        android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Matching media - Title='$targetTitle', Dur=$targetDuration ms")
 
         // Permission Check
         val hasPermission = if (isAtLeastAndroid13) {
@@ -142,10 +142,28 @@ object DeviceMediaManager {
         }
         
         if (!hasPermission) {
-            android.util.Log.e("Local_Media_Sync", "DeviceMediaManager: Missing permissions to query MediaStore")
+            android.util.Log.e("MusicSyncFlow", "DeviceMediaManager: Missing permissions to query MediaStore")
             return null
         }
 
+        // Helper: strip file extension and normalize separators for fuzzy comparison
+        fun normalizeForMatch(input: String): String {
+            return input.replace(Regex("\\.(mp4|mkv|avi|mov|webm|flv|mp3|m4a|ogg|wav|aac|flac)$"), "")
+                        .replace(Regex("[_\\-.]"), " ")
+                        .replace(Regex("\\s+"), " ")
+                        .trim()
+        }
+        
+        // Extract meaningful words (3+ chars) for overlap matching
+        fun extractWords(input: String): Set<String> {
+            return normalizeForMatch(input).split(" ")
+                .filter { it.length >= 3 }
+                .toSet()
+        }
+        
+        val targetNormalized = normalizeForMatch(targetTitle)
+        val targetWords = extractWords(targetTitle)
+        
         // Helper to check match
         fun checkCursor(cursor: android.database.Cursor, uriPrefix: Uri, type: String): Uri? {
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -154,28 +172,59 @@ object DeviceMediaManager {
             val displayCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
             
             var count = 0
+            var bestMatch: Pair<Long, Int>? = null // (id, matchCount)
+            
             while (cursor.moveToNext()) {
                 count++
                 val id = cursor.getLong(idCol)
                 val title = cursor.getString(titleCol)?.lowercase()?.trim() ?: ""
                 val displayName = if (displayCol != -1) cursor.getString(displayCol)?.lowercase()?.trim() ?: "" else ""
                 
-                // Fuzzy title match: exact match OR one contains the other
-                val isTitleMatch = title == targetTitle || 
-                                   (displayName.isNotEmpty() && displayName.contains(targetTitle)) || 
-                                   targetTitle.contains(title)
+                val titleNorm = normalizeForMatch(title)
+                val displayNorm = normalizeForMatch(displayName)
                 
-                if (isTitleMatch) {
-                   android.util.Log.d("Local_Media_Sync", "DeviceMediaManager: MATCH FOUND ($type)! ID=$id, Title='$title', Display='$displayName'")
+                // Level 1: Exact match (after normalization)
+                val isExactMatch = titleNorm == targetNormalized || displayNorm == targetNormalized
+                
+                // Level 2: Contains match (one contains the other, after normalization)
+                val isContainsMatch = titleNorm.contains(targetNormalized) || 
+                                       targetNormalized.contains(titleNorm) ||
+                                       displayNorm.contains(targetNormalized) ||
+                                       targetNormalized.contains(displayNorm)
+                
+                if (isExactMatch || isContainsMatch) {
+                   android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND ($type)! ID=$id, Title='$title', Display='$displayName'")
                    return ContentUris.withAppendedId(uriPrefix, id)
-                } else {
-                   // Log first 5 failures to avoid spam
-                   if (count <= 5) {
-                       android.util.Log.v("Local_Media_Sync", "DeviceMediaManager: No match ($type) - Title='$title', Display='$displayName' vs Target='$targetTitle'")
-                   }
+                }
+                
+                // Level 3: Word overlap (for renamed files, since duration already matches)
+                if (targetWords.isNotEmpty()) {
+                    val candidateWords = extractWords(title) + extractWords(displayName)
+                    val overlap = targetWords.intersect(candidateWords).size
+                    if (overlap > 0 && (bestMatch == null || overlap > bestMatch!!.second)) {
+                        bestMatch = Pair(id, overlap)
+                        android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Word overlap ($type) ID=$id, overlap=$overlap/${targetWords.size}, Title='$title'")
+                    }
+                }
+                
+                // Log first 5 failures to avoid spam
+                if (count <= 5 && bestMatch == null) {
+                    android.util.Log.v("MusicSyncFlow", "DeviceMediaManager: No match ($type) - Title='$title', Display='$displayName' vs Target='$targetTitle'")
                 }
             }
-            android.util.Log.d("Local_Media_Sync", "DeviceMediaManager: Scanned $count $type items, no match found.")
+            
+            // Accept word-overlap match if at least half the target words matched (duration already filtered)
+            if (bestMatch != null && targetWords.isNotEmpty()) {
+                val overlapRatio = bestMatch!!.second.toFloat() / targetWords.size
+                android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Best word-overlap match - ID=${bestMatch!!.first}, ratio=$overlapRatio (${bestMatch!!.second}/${targetWords.size})")
+                // Since duration already matches (±1s), even a single meaningful word overlap is enough
+                if (overlapRatio >= 0.5f || bestMatch!!.second >= 2) {
+                    android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND via word overlap ($type)! ID=${bestMatch!!.first}")
+                    return ContentUris.withAppendedId(uriPrefix, bestMatch!!.first)
+                }
+            }
+            
+            android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Scanned $count $type items, no match found.")
             return null
         }
 
@@ -195,7 +244,7 @@ object DeviceMediaManager {
             )
             
             // Log query params
-            android.util.Log.d("Local_Media_Sync", "DeviceMediaManager: Querying Video for duration ${targetDuration - durationDelta}..${targetDuration + durationDelta}")
+            android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Querying Video for duration ${targetDuration - durationDelta}..${targetDuration + durationDelta}")
 
             val selection = "${MediaStore.Video.Media.DURATION} BETWEEN ? AND ?"
             val args = arrayOf((targetDuration - durationDelta).toString(), (targetDuration + durationDelta).toString())
@@ -205,7 +254,7 @@ object DeviceMediaManager {
                 if (match != null) return match
             }
         } catch (e: Exception) {
-            android.util.Log.e("Local_Media_Sync", "DeviceMediaManager: Video query failed", e)
+            android.util.Log.e("MusicSyncFlow", "DeviceMediaManager: Video query failed", e)
         }
         
         // 2. Search Audio
@@ -223,7 +272,7 @@ object DeviceMediaManager {
                 MediaStore.Audio.Media.DURATION
             )
             
-             android.util.Log.d("Local_Media_Sync", "DeviceMediaManager: Querying Audio for duration ${targetDuration - durationDelta}..${targetDuration + durationDelta}")
+             android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Querying Audio for duration ${targetDuration - durationDelta}..${targetDuration + durationDelta}")
             
             val selection = "${MediaStore.Audio.Media.DURATION} BETWEEN ? AND ?"
             val args = arrayOf((targetDuration - durationDelta).toString(), (targetDuration + durationDelta).toString())
@@ -233,10 +282,10 @@ object DeviceMediaManager {
                  if (match != null) return match
             }
         } catch (e: Exception) {
-            android.util.Log.e("Local_Media_Sync", "DeviceMediaManager: Audio query failed", e)
+            android.util.Log.e("MusicSyncFlow", "DeviceMediaManager: Audio query failed", e)
         }
 
-        android.util.Log.w("Local_Media_Sync", "DeviceMediaManager: FINAL - No local match found for '$targetTitle'")
+        android.util.Log.w("MusicSyncFlow", "DeviceMediaManager: FINAL - No local match found for '$targetTitle'")
         return null
     }
 

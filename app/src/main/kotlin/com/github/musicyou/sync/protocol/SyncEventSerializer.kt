@@ -129,16 +129,19 @@ object SyncEventSerializer {
                 json.put("type", "REACTION")
                 json.put("emoji", event.emoji)
                 event.senderName?.let { json.put("senderName", it) }
+                json.put("eventId", event.eventId)
             }
             is FlashMessageEvent -> {
                 json.put("type", "FLASH_MESSAGE")
                 json.put("message", event.message)
                 event.senderName?.let { json.put("senderName", it) }
+                json.put("eventId", event.eventId)
             }
             is KineticTouchEvent -> {
                 json.put("type", "KINETIC_TOUCH")
                 json.put("x", event.x.toDouble())
                 json.put("y", event.y.toDouble())
+                json.put("eventId", event.eventId)
             }
         }
         return json.toString().toByteArray(Charsets.UTF_8)
@@ -273,17 +276,20 @@ object SyncEventSerializer {
                 "REACTION" -> ReactionEvent(
                     emoji = json.getString("emoji"),
                     timestamp = timestamp,
-                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true }
+                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true },
+                    eventId = json.optString("eventId", java.util.UUID.randomUUID().toString())
                 )
                 "FLASH_MESSAGE" -> FlashMessageEvent(
                     message = json.getString("message"),
                     timestamp = timestamp,
-                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true }
+                    senderName = json.optString("senderName", null).takeIf { it?.isNotEmpty() == true },
+                    eventId = json.optString("eventId", java.util.UUID.randomUUID().toString())
                 )
                 "KINETIC_TOUCH" -> KineticTouchEvent(
                     x = json.getDouble("x").toFloat(),
                     y = json.getDouble("y").toFloat(),
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    eventId = json.optString("eventId", java.util.UUID.randomUUID().toString())
                 )
                 else -> null
             }.also {

@@ -22,7 +22,7 @@ suspend fun Innertube.player(videoId: String) = runCatchingNonCancellable {
                 videoId = videoId
             )
         )
-        mask("playabilityStatus.status,playerConfig.audioConfig,streamingData.adaptiveFormats,videoDetails.videoId")
+        mask("playabilityStatus.status,playerConfig.audioConfig,streamingData.adaptiveFormats,streamingData.formats,streamingData.dashManifestUrl,streamingData.hlsManifestUrl,videoDetails.videoId")
     }.body<PlayerResponse>()
 
     if (response.playabilityStatus?.status == "OK") response
@@ -49,7 +49,7 @@ suspend fun Innertube.player(videoId: String) = runCatchingNonCancellable {
                     videoId = videoId
                 )
             )
-            mask("playabilityStatus.status,playerConfig.audioConfig,streamingData.adaptiveFormats,videoDetails.videoId")
+            mask("playabilityStatus.status,playerConfig.audioConfig,streamingData.adaptiveFormats,streamingData.formats,streamingData.dashManifestUrl,streamingData.hlsManifestUrl,videoDetails.videoId")
         }.body<PlayerResponse>()
 
         if (safePlayerResponse.playabilityStatus?.status != "OK") {

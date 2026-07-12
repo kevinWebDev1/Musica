@@ -61,6 +61,11 @@ fun SyncSheetContent(
 
     val neumorphicColors = rememberNeumorphicColors()
 
+    // File Picker for Manual Match
+    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { sessionManager.setManualMatchUri(it.toString()) }
+    }
+
     // Friend Presence Logic
     val friendsPresence by produceState(initialValue = emptyList<com.github.musicyou.auth.FriendPresence>()) {
         com.github.musicyou.auth.ProfileManager.observeFriendsPresence().collect { value = it }
@@ -243,6 +248,22 @@ fun SyncSheetContent(
                     style = MaterialTheme.typography.bodyMedium,
                     color = statusColor
                 )
+            }
+
+            // Manual File Selection Fallback
+            if (!sessionState.isHost && sessionState.clockSyncMessage?.contains("File not found locally!") == true) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = { filePickerLauncher.launch("*/*") },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary,
+                        contentColor = MaterialTheme.colorScheme.onTertiary
+                    )
+                ) {
+                    Text("Select File Manually")
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
