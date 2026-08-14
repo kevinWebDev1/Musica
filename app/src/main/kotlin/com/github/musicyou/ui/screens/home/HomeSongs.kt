@@ -154,10 +154,13 @@ fun HomeSongs(
         openSearch = openSearch,
         openProfile = openProfile,
         openSettings = openSettings
-    ) {
+    ) { paddingValues ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 400.dp),
-            contentPadding = PaddingValues(bottom = if (viewModel.items.isNotEmpty()) 16.dp + 72.dp + playerPadding else 16.dp + playerPadding),
+            contentPadding = PaddingValues(
+                top = paddingValues.calculateTopPadding(),
+                bottom = if (viewModel.items.isNotEmpty()) 16.dp + 72.dp + playerPadding + paddingValues.calculateBottomPadding() else 16.dp + playerPadding + paddingValues.calculateBottomPadding()
+            ),
             modifier = Modifier.fillMaxSize()
         ) {
             item(

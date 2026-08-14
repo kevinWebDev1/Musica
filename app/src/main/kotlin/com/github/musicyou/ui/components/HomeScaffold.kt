@@ -2,6 +2,7 @@ package com.github.musicyou.ui.components
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -49,7 +50,7 @@ fun HomeScaffold(
     openProfile: () -> Unit = {},
     profileContent: @Composable (() -> Unit)? = null,
     openSettings: () -> Unit,
-    content: @Composable (() -> Unit)
+    content: @Composable (PaddingValues) -> Unit
 ) {
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     
@@ -136,13 +137,11 @@ fun HomeScaffold(
         },
         snackbarHost = snackbarHost,
         floatingActionButton = floatingActionButton,
-        contentWindowInsets = WindowInsets()
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { paddingValues ->
         Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues = paddingValues),
-            content = content
+            modifier = Modifier.fillMaxSize(),
+            content = { content(paddingValues) }
         )
     }
 }

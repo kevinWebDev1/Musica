@@ -94,13 +94,14 @@ fun HomePlaylists(
         openSearch = openSearch,
         openProfile = openProfile,
         openSettings = openSettings
-    ) {
+    ) { paddingValues ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 150.dp),
             contentPadding = PaddingValues(
                 start = 8.dp,
+                top = paddingValues.calculateTopPadding(),
                 end = 8.dp,
-                bottom = 16.dp + playerPadding
+                bottom = 16.dp + playerPadding + paddingValues.calculateBottomPadding()
             ),
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxSize()

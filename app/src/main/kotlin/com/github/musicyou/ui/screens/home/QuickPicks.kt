@@ -208,7 +208,7 @@ fun QuickPicks(
                 )
             }
         }
-    ) {
+    ) { paddingValues ->
         BoxWithConstraints {
             val quickPicksLazyGridItemWidthFactor =
                 if (isLandscape && maxWidth * 0.475f >= 320.dp) 0.475f else 0.9f
@@ -228,22 +228,23 @@ fun QuickPicks(
 
             val itemInHorizontalGridWidth = maxWidth * quickPicksLazyGridItemWidthFactor
 
+            // Determine what songs to show:
+            // 1. If user has listening history (viewModel.trending != null), use relatedPage
+            // 2. If no history but we have trendingSongs from search, show those directly
+            val songsToDisplay = if (viewModel.trending != null) {
+                viewModel.relatedPageResult?.getOrNull()?.songs
+            } else {
+                viewModel.trendingSongs
+            }
+            
+            val relatedPageData = viewModel.relatedPageResult?.getOrNull()
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(top = 4.dp, bottom = 16.dp + playerPadding)
+                    .padding(top = 4.dp + paddingValues.calculateTopPadding(), bottom = 16.dp + playerPadding + paddingValues.calculateBottomPadding())
             ) {
-                // Determine what songs to show:
-                // 1. If user has listening history (viewModel.trending != null), use relatedPage
-                // 2. If no history but we have trendingSongs from search, show those directly
-                val songsToDisplay = if (viewModel.trending != null) {
-                    viewModel.relatedPageResult?.getOrNull()?.songs
-                } else {
-                    viewModel.trendingSongs
-                }
-                
-                val relatedPageData = viewModel.relatedPageResult?.getOrNull()
                 
                 if (songsToDisplay != null && songsToDisplay.isNotEmpty()) {
                     LazyHorizontalGrid(
@@ -403,7 +404,14 @@ fun QuickPicks(
                     Unit
                 }
                 
-                if (viewModel.relatedPageResult?.exceptionOrNull() != null && viewModel.trendingSongs.isNullOrEmpty()) {
+                val isErrorOrEmpty = viewModel.relatedPageResult?.isFailure == true || 
+                    (viewModel.relatedPageResult?.isSuccess == true && 
+                     songsToDisplay.isNullOrEmpty() && 
+                     relatedPageData?.albums.isNullOrEmpty() && 
+                     relatedPageData?.artists.isNullOrEmpty() && 
+                     relatedPageData?.playlists.isNullOrEmpty())
+
+                if (isErrorOrEmpty && viewModel.trendingSongs.isNullOrEmpty()) {
                     Text(
                         text = stringResource(id = R.string.home_error),
                         style = MaterialTheme.typography.titleMedium,

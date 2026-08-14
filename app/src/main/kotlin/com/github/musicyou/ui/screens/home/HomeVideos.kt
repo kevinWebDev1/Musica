@@ -116,8 +116,8 @@ fun HomeVideos(
         openSearch = openSearch,
         openProfile = openProfile,
         openSettings = openSettings
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    ) { paddingValues ->
+        Column(modifier = Modifier.fillMaxSize().padding(top = paddingValues.calculateTopPadding(), bottom = paddingValues.calculateBottomPadding())) {
             // Header Content: Search Bar and Pills
             // Only show if not inside a folder
             AnimatedVisibility(

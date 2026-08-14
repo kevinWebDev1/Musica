@@ -59,18 +59,10 @@ suspend fun Innertube.artistPage(browseId: String): Result<Innertube.ArtistPage>
                 ?.musicImmersiveHeaderRenderer
                 ?.description
                 ?.text,
-            thumbnail = (response
-                .header
-                ?.musicImmersiveHeaderRenderer
-                ?.foregroundThumbnail
-                ?: response
-                    .header
-                    ?.musicImmersiveHeaderRenderer
-                    ?.thumbnail)
-                ?.musicThumbnailRenderer
-                ?.thumbnail
-                ?.thumbnails
-                ?.getOrNull(0),
+            thumbnail = response.header?.musicImmersiveHeaderRenderer?.let {
+                val t = it.foregroundThumbnail ?: it.thumbnail
+                t?.musicThumbnailRenderer?.thumbnail?.thumbnails?.lastOrNull()
+            },
             shuffleEndpoint = response
                 .header
                 ?.musicImmersiveHeaderRenderer
