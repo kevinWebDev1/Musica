@@ -55,6 +55,15 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Audiotrack
+import androidx.compose.material.icons.outlined.Share
+import kotlinx.coroutines.flow.firstOrNull
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Headset
+import androidx.compose.material.icons.outlined.PlayCircle
+import com.github.musicyou.ui.styling.neumorphicRaised
+import com.github.musicyou.ui.styling.neumorphicPressed
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -205,6 +214,7 @@ fun Player(
     var baselineSpeed by rememberSaveable { mutableStateOf(1f) }
     var activeSpeed by rememberSaveable { mutableStateOf(1f) }
     var isSpeedGestureActive by remember { mutableStateOf(false) }
+    var videoResizeMode by rememberSaveable { mutableStateOf(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
     LaunchedEffect(areControlsVisible, isFullScreen) {
         if (areControlsVisible && isFullScreen) {
@@ -523,6 +533,9 @@ fun Player(
         val isYouTube = remember(mediaItem) {
             mediaItem.mediaId.startsWith("youtube-embed:")
         }
+        val isLocalItem = remember(mediaItem) {
+            mediaItem.mediaId.startsWith("content://") || mediaItem.mediaId.startsWith("file://") || mediaItem.mediaId.startsWith("/")
+        }
         val isVideo = remember(mediaItem, syncSessionState.localMatchUri) {
             val path = syncSessionState.localMatchUri ?: mediaItem.mediaId
             val isVid = path.endsWith(".mp4", ignoreCase = true) ||
@@ -535,11 +548,62 @@ fun Player(
             isVid
         }
 
+        var isDownloaded by remember(mediaItem.mediaId) { mutableStateOf(false) }
+        LaunchedEffect(mediaItem.mediaId) {
+            withContext(Dispatchers.IO) {
+                try {
+                    if (!isLocalItem) {
+                        val format = Database.format(mediaItem.mediaId).firstOrNull() as? com.github.musicyou.models.Format
+                        val contentLength = format?.contentLength
+                        if (contentLength != null) {
+                            isDownloaded = binder.cache.isCached(mediaItem.mediaId, 0L, contentLength)
+                        }
+                    }
+                } catch(e: Exception) {}
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // --- Header ---
+            if (!isFullScreen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    IconButton(
+                        onClick = onPop,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .neumorphicPressed(cornerRadius = 24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Dismiss",
+                            tint = neumorphicColors.onBackground,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    if (!isLocalItem) {
+                        SongVideoToggle(
+                            isVideoMode = isVideo,
+                            onToggle = { forceVideo ->
+                                if (forceVideo != isVideo) {
+                                    binder.toggleForceVideo(forceVideo)
+                                }
+                            },
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .weight(1F)
@@ -555,7 +619,7 @@ fun Player(
                                 .weight(if (isFullScreen) 1f else 0.66f)
                                 .padding(bottom = if (isFullScreen) 0.dp else 16.dp)
                         ) {
-                            if (isYouTube) {
+                            if (isYouTube && isVideo) {
                                 Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
                                     YouTubeGestureSurface(
                                         modifier = Modifier.fillMaxSize(),
@@ -580,6 +644,27 @@ fun Player(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
                                             // Rotation Button
                                             IconButton(
                                                 onClick = { 
@@ -661,26 +746,7 @@ fun Player(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
-                                                }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
+
 
                                             // Rotation Button
                                             IconButton(
@@ -782,7 +848,7 @@ fun Player(
                                 else 1.25f
                             )
                         ) {
-                            if (isYouTube) {
+                            if (isYouTube && isVideo) {
                                 Box {
                                     YouTubeGestureSurface(
                                         modifier = if (isFullScreen) Modifier.fillMaxSize() else Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -810,6 +876,27 @@ fun Player(
                                                 .padding(bottom = 16.dp, end = 24.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
                                             // Rotation Button
                                             IconButton(
                                                 onClick = { 
@@ -926,26 +1013,7 @@ fun Player(
                                                 .padding(bottom = 16.dp, end = 24.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
-                                                }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
+
 
                                             // Rotation Button
                                             IconButton(
@@ -1066,6 +1134,11 @@ fun Player(
                             com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
                             com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
                             com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                        },
+                        isYouTube = isYouTube,
+                        videoResizeMode = videoResizeMode,
+                        onToggleZoom = {
+                            videoResizeMode = if (videoResizeMode == androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT) androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                         }
                     )
                 }
@@ -1087,8 +1160,10 @@ fun Player(
                                 }
                             )
                         },
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Playlist / Queue
                     IconButton(onClick = { isQueueOpen = true }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
@@ -1096,56 +1171,46 @@ fun Player(
                         )
                     }
 
-                    Text(
-                        text = nextSongTitle,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.weight(1F),
-                        overflow = TextOverflow.Ellipsis,
-                        maxLines = 1
-                    )
-
+                    // Sleep Timer
                     TooltipIconButton(
                         description = R.string.sleep_timer,
                         onClick = { isShowingSleepTimerDialog = true },
                         icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                     )
 
-                    // Sync Icon with Active Indicator
-                    Box {
-                        TooltipIconButton(
-                           description = R.string.sync_session,
-                           onClick = { isShowingSyncSheet = true },
-                           icon = Icons.Outlined.Group,
-                           tint = if (syncSessionState.sessionId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    // Listen Together (Group)
+                    TooltipIconButton(
+                       description = R.string.sync_session,
+                       onClick = { isShowingSyncSheet = true },
+                       icon = Icons.Outlined.Group,
+                       tint = if (syncSessionState.sessionId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+
+                    // Download Button
+                    val context = LocalContext.current
+                    IconButton(
+                        onClick = {
+                            if (!isDownloaded && !isLocalItem) {
+                                com.github.musicyou.utils.DownloadManager.downloadSong(
+                                    context = context,
+                                    mediaItem = mediaItem,
+                                    cacheDataSourceFactory = binder.createCacheDataSource() as androidx.media3.datasource.cache.CacheDataSource.Factory
+                                )
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                            contentDescription = "Download"
                         )
                     }
-                    
-                    // Persistent Speed Selector
+
+                    // Persistent Speed Selector (Icon instead of Text)
                     IconButton(onClick = { isShowingSpeedDialog = true }) {
-                         Text(
-                             text = "${binder.player.playbackParameters.speed}x",
-                             style = MaterialTheme.typography.labelSmall,
-                             fontWeight = FontWeight.Bold,
-                             maxLines = 1
-                         )
+                        Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
                     }
 
-
-                    // Smart Local Source Indicator
-                    val hasLocalMatch = syncSessionState.localMatchUri != null
-                    if (hasLocalMatch) {
-                        val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
-                        val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
-
-                        TooltipIconButton(
-                            description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
-                            onClick = { binder.sessionManager.forcePlayLocal() },
-                            icon = sourceIcon,
-                            tint = sourceColor
-                        )
-                    }
-
+                    // Menu
                     IconButton(
                         onClick = {
                             menuState.display {
@@ -1168,27 +1233,25 @@ fun Player(
                             contentDescription = null,
                         )
                     }
+                    
+                    // Smart Local Source Indicator (Dynamic)
+                    val hasLocalMatch = syncSessionState.localMatchUri != null
+                    if (hasLocalMatch) {
+                        val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
+                        val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
+                        TooltipIconButton(
+                            description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
+                            onClick = { binder.sessionManager.forcePlayLocal() },
+                            icon = sourceIcon,
+                            tint = sourceColor
+                        )
+                    }
                 }
             }
         }
 
-        if (!isFullScreen) {
-            IconButton(
-                onClick = onPop,
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(start = 32.dp, top = 8.dp)
-                    .background(neumorphicColors.background.copy(alpha = 0.7f), shape = CircleShape)
-                    .align(Alignment.TopStart)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Dismiss",
-                    tint = neumorphicColors.onBackground,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
+        // Floating close button was moved to the header Box
 
         if (isShowingSleepTimerDialog) {
             SleepTimer(
@@ -1444,7 +1507,10 @@ fun FullscreenControls(
     onCycleSpeed: () -> Unit,
     onShowQuality: () -> Unit,
     videoQualityText: String,
-    modifier: Modifier = Modifier
+    videoResizeMode: Int,
+    onToggleZoom: () -> Unit,
+    modifier: Modifier = Modifier,
+    isYouTube: Boolean = true
 ) {
     val context = LocalContext.current
     
@@ -1509,16 +1575,18 @@ fun FullscreenControls(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Quality Toggle
-            IconButton(
-                onClick = onShowQuality,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Text(
-                    text = videoQualityText,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            if (isYouTube) {
+                IconButton(
+                    onClick = onShowQuality,
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                ) {
+                    Text(
+                        text = videoQualityText,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // Rotation
@@ -1764,6 +1832,49 @@ fun ManualMatchOverlay(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Select Local File")
             }
+        }
+    }
+}
+
+@Composable
+fun SongVideoToggle(
+    isVideoMode: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .neumorphicPressed(cornerRadius = 24.dp)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val songModifier = if (!isVideoMode) Modifier.neumorphicRaised(cornerRadius = 20.dp) else Modifier
+        val songColor = if (!isVideoMode) MaterialTheme.colorScheme.primary else Color.LightGray
+        
+        val videoModifier = if (isVideoMode) Modifier.neumorphicRaised(cornerRadius = 20.dp) else Modifier
+        val videoColor = if (isVideoMode) MaterialTheme.colorScheme.primary else Color.LightGray
+
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .then(songModifier)
+                .clickable { onToggle(false) }
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.Headset, contentDescription = "Song", tint = songColor)
+        }
+        
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .then(videoModifier)
+                .clickable { onToggle(true) }
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.PlayCircle, contentDescription = "Video", tint = videoColor)
         }
     }
 }

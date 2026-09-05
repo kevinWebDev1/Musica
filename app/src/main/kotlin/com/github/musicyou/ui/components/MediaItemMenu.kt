@@ -218,7 +218,8 @@ fun BaseMediaItemMenu(
     onHideFromDatabase: (() -> Unit)? = null,
     onRemoveFromQuickPicks: (() -> Unit)? = null,
     onGoToAlbum: ((String) -> Unit)? = null,
-    onGoToArtist: ((String) -> Unit)? = null
+    onGoToArtist: ((String) -> Unit)? = null,
+    initialViewingPlaylists: Boolean = false
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
@@ -249,7 +250,8 @@ fun BaseMediaItemMenu(
         },
         onGoToAlbum = onGoToAlbum,
         onGoToArtist = onGoToArtist,
-        onRemoveFromQuickPicks = onRemoveFromQuickPicks
+        onRemoveFromQuickPicks = onRemoveFromQuickPicks,
+        initialViewingPlaylists = initialViewingPlaylists
     ) {
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
@@ -280,12 +282,13 @@ fun MediaItemMenu(
     onGoToAlbum: ((String) -> Unit)? = null,
     onGoToArtist: ((String) -> Unit)? = null,
     onRemoveFromQuickPicks: (() -> Unit)? = null,
+    initialViewingPlaylists: Boolean = false,
     onShare: () -> Unit
 ) {
     val density = LocalDensity.current
 
-    var isViewingPlaylists by remember {
-        mutableStateOf(false)
+    var isViewingPlaylists by rememberSaveable {
+        mutableStateOf(initialViewingPlaylists)
     }
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()

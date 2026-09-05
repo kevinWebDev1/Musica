@@ -65,8 +65,22 @@ class QuickPicksViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 
                 // Fall back to trending if search failed or no genre
-                if (trendingSongs == null) {
+                if (trendingSongs.isNullOrEmpty()) {
                     trendingSongs = Innertube.trending(gl = region)?.getOrNull()
+                }
+
+                // Ultimate fallback: search for top hits if charts/trending browse endpoint fails
+                if (trendingSongs.isNullOrEmpty()) {
+                    val searchQuery = when (region) {
+                        "IN" -> "Top Hindi Songs"
+                        "BR" -> "Top Portuguese Songs"
+                        "DE" -> "Top German Songs"
+                        "JP" -> "Top Japanese Songs"
+                        "KR" -> "Top Korean Songs"
+                        "FR" -> "Top French Songs"
+                        else -> "Top Songs"
+                    }
+                    trendingSongs = com.github.innertube.requests.searchSongs(searchQuery)?.getOrNull()?.items?.filterIsInstance<Innertube.SongItem>()
                 }
                 
                 val fallbackSongId = trendingSongs?.let { songs ->

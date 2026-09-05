@@ -104,6 +104,10 @@ fun YouTubeGestureSurface(
          }
     }
 
+    val currentPositionMsState = androidx.compose.runtime.rememberUpdatedState(currentPositionMs)
+    val durationMsState = androidx.compose.runtime.rememberUpdatedState(durationMs)
+    val onSeekState = androidx.compose.runtime.rememberUpdatedState(onSeek)
+
     LaunchedEffect(isLockControlsVisible, isLocked) {
         if (isLockControlsVisible && isLocked) {
             delay(3000)
@@ -195,10 +199,10 @@ fun YouTubeGestureSurface(
                                 tapJob?.cancel()
                                 val seekDurationMs = doubleTapSeekDuration * 1000L
                                 if (isLeftZone) {
-                                    onSeek((currentPositionMs - seekDurationMs).coerceAtLeast(0))
+                                    onSeekState.value((currentPositionMsState.value - seekDurationMs).coerceAtLeast(0))
                                     seekRippleState = SeekRippleData(isForward = false)
                                 } else {
-                                    onSeek((currentPositionMs + seekDurationMs).coerceAtMost(durationMs.coerceAtLeast(0L)))
+                                    onSeekState.value((currentPositionMsState.value + seekDurationMs).coerceAtMost(durationMsState.value.coerceAtLeast(0L)))
                                     seekRippleState = SeekRippleData(isForward = true)
                                 }
                                 tapScope.launch {
@@ -274,7 +278,9 @@ fun YouTubeGestureSurface(
                             // Horizontal Drag -> Seek / Scrub
                             var totalDragX = 0f
                             val maxDragDistance = screenWidth.toFloat()
-                            val videoDuration = durationMs.coerceAtLeast(1L)
+                            val videoDuration = durationMsState.value.coerceAtLeast(1L)
+                            var finalSeekPosition: Long? = null
+                            val startPositionMs = currentPositionMsState.value
                             
                             do {
                                 val event = awaitPointerEvent()
@@ -291,9 +297,8 @@ fun YouTubeGestureSurface(
                                     val seekMsPerPixel = (seekRangeMs / maxDragDistance) * scrubSeekIntensity
                                     
                                     val seekAmount = (totalDragX * seekMsPerPixel).toLong()
-                                    val newPosition = (currentPositionMs + seekAmount).coerceIn(0, videoDuration)
-                                    
-                                    onSeek(newPosition)
+                                    val newPosition = (startPositionMs + seekAmount).coerceIn(0, videoDuration)
+                                    finalSeekPosition = newPosition
                                     
                                     // Feedback using toast
                                     val totalSeconds = newPosition / 1000
@@ -301,7 +306,7 @@ fun YouTubeGestureSurface(
                                     val seconds = totalSeconds % 60
                                     val timeString = "${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
                                     
-                                    val diff = newPosition - currentPositionMs
+                                    val diff = newPosition - startPositionMs
                                     val sign = if (diff >= 0) "+" else "-"
                                     val diffSeconds = kotlin.math.abs(diff) / 1000
                                     val diffMins = diffSeconds / 60
@@ -313,6 +318,9 @@ fun YouTubeGestureSurface(
                                     change.consume()
                                 }
                             } while (event.changes.any { it.pressed })
+                            
+                            // Apply seek only when user lifts finger!
+                            finalSeekPosition?.let { onSeekState.value(it) }
                             
                             tapScope.launch {
                                 delay(800)

@@ -28,38 +28,38 @@ suspend fun Innertube.trending(
                 context = YouTubeClient.WEB_REMIX.toContext(gl = gl, hl = hl)
             )
         )
-        mask("contents.sectionListRenderer.contents.musicCarouselShelfRenderer(header.musicCarouselShelfBasicHeaderRenderer(title),contents($MUSIC_RESPONSIVE_LIST_ITEM_RENDERER_MASK))")
+        mask("contents")
     }.body<BrowseResponse>()
 
     val sectionListRendererContent = response.contents?.sectionListRenderer
         ?: response.contents?.singleColumnBrowseResultsRenderer?.tabs?.firstOrNull()?.tabRenderer?.content?.sectionListRenderer
 
-    sectionListRendererContent
-        ?.findSectionByTitle("Top songs") // Standard English title
-        ?.musicCarouselShelfRenderer
-        ?.contents
-        ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicResponsiveListItemRenderer)
-        ?.mapNotNull(Innertube.SongItem::from)
-        ?: sectionListRendererContent
-            ?.findSectionByTitle("Top music videos") // Often prominently regional
-            ?.musicCarouselShelfRenderer
-            ?.contents
-            ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicResponsiveListItemRenderer)
-            ?.mapNotNull(Innertube.SongItem::from)
-        ?: sectionListRendererContent
-            ?.findSectionByTitle("Trending") 
-            ?.musicCarouselShelfRenderer
-            ?.contents
-            ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicResponsiveListItemRenderer)
-            ?.mapNotNull(Innertube.SongItem::from)
-        ?: sectionListRendererContent
-            ?.contents
-            ?.filter { it.musicCarouselShelfRenderer != null || it.musicShelfRenderer != null }
-            ?.firstOrNull()
-            ?.let { content ->
-                (content.musicCarouselShelfRenderer ?: content.musicShelfRenderer as? MusicCarouselShelfRenderer)
-                    ?.contents
-                    ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicResponsiveListItemRenderer)
-                    ?.mapNotNull(Innertube.SongItem::from)
-            }
+    val sections = sectionListRendererContent?.contents ?: emptyList()
+
+    // 1. Try to find section matching known title keywords
+    val knownTitles = listOf("Top songs", "Top music videos", "Trending", "Charts", "Popular")
+    val matchedSection = sections.firstOrNull { content ->
+        val title = content.musicCarouselShelfRenderer?.header?.musicCarouselShelfBasicHeaderRenderer?.title?.runs?.firstOrNull()?.text
+            ?: content.musicShelfRenderer?.title?.runs?.firstOrNull()?.text
+        title != null && knownTitles.any { known -> title.contains(known, ignoreCase = true) }
+    } ?: sections.firstOrNull { it.musicCarouselShelfRenderer != null || it.musicShelfRenderer != null }
+
+    val itemsFromCarousel = matchedSection?.musicCarouselShelfRenderer?.contents
+        ?.mapNotNull { it.musicResponsiveListItemRenderer }
+        ?.mapNotNull { Innertube.SongItem.from(it) }
+
+    val itemsFromShelf = matchedSection?.musicShelfRenderer?.contents
+        ?.mapNotNull { it.musicResponsiveListItemRenderer }
+        ?.mapNotNull { Innertube.SongItem.from(it) }
+
+    itemsFromCarousel ?: itemsFromShelf ?: sections.firstNotNullOfOrNull { content ->
+        content.musicCarouselShelfRenderer?.contents
+            ?.mapNotNull { it.musicResponsiveListItemRenderer }
+            ?.mapNotNull { Innertube.SongItem.from(it) }
+            ?.takeIf { it.isNotEmpty() }
+            ?: content.musicShelfRenderer?.contents
+                ?.mapNotNull { it.musicResponsiveListItemRenderer }
+                ?.mapNotNull { Innertube.SongItem.from(it) }
+                ?.takeIf { it.isNotEmpty() }
+    }
 }

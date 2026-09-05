@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -69,7 +71,20 @@ fun PlayerScaffold(
             BottomSheetScaffold(
                 sheetContent = {
                     Box(
-                        modifier = Modifier.fillMaxHeight()
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    if (dragAmount < -20f) {
+                                        // Swiped up -> Open full player
+                                        navController.navigate(Routes.FullscreenPlayer)
+                                    } else if (dragAmount > 20f) {
+                                        // Swiped down -> Hide miniplayer
+                                        scope.launch { sheetState.hide() }
+                                    }
+                                }
+                            }
                     ) {
                         MiniPlayer(
                             openPlayer = {

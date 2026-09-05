@@ -5,62 +5,70 @@ import com.github.innertube.models.MusicShelfRenderer
 import com.github.innertube.models.NavigationEndpoint
 
 fun Innertube.SongItem.Companion.from(content: MusicShelfRenderer.Content): Innertube.SongItem? {
-    val (mainRuns, otherRuns) = content.runs
+    return try {
+        val (mainRuns, otherRuns) = content.runs
 
-    // Possible configurations:
-    // "song" • author(s) • album • duration
-    // "song" • author(s) • duration
-    // author(s) • album • duration
-    // author(s) • duration
+        // Possible configurations:
+        // "song" • author(s) • album • duration
+        // "song" • author(s) • duration
+        // author(s) • album • duration
+        // author(s) • duration
 
-    val album: Innertube.Info<NavigationEndpoint.Endpoint.Browse>? = otherRuns
-        .getOrNull(otherRuns.lastIndex - 1)
-        ?.firstOrNull()
-        ?.takeIf { run ->
-            run
-                .navigationEndpoint
-                ?.browseEndpoint
-                ?.type == "MUSIC_PAGE_TYPE_ALBUM"
-        }
-        ?.let(Innertube::Info)
+        val album: Innertube.Info<NavigationEndpoint.Endpoint.Browse>? = otherRuns
+            .getOrNull(otherRuns.lastIndex - 1)
+            ?.firstOrNull()
+            ?.takeIf { run ->
+                run
+                    .navigationEndpoint
+                    ?.browseEndpoint
+                    ?.type == "MUSIC_PAGE_TYPE_ALBUM"
+            }
+            ?.let(Innertube::Info)
 
-    return Innertube.SongItem(
-        info = mainRuns
-            .firstOrNull()
-            ?.let(Innertube::Info),
-        authors = otherRuns
-            .getOrNull(otherRuns.lastIndex - if (album == null) 1 else 2)
-            ?.map(Innertube::Info),
-        album = album,
-        durationText = otherRuns
-            .lastOrNull()
-            ?.firstOrNull()?.text,
-        thumbnail = content
-            .thumbnail
-    ).takeIf { it.info?.endpoint?.videoId != null }
+        Innertube.SongItem(
+            info = mainRuns
+                .firstOrNull()
+                ?.let(Innertube::Info),
+            authors = otherRuns
+                .getOrNull(otherRuns.lastIndex - if (album == null) 1 else 2)
+                ?.map(Innertube::Info),
+            album = album,
+            durationText = otherRuns
+                .lastOrNull()
+                ?.firstOrNull()?.text,
+            thumbnail = content
+                .thumbnail
+        ).takeIf { it.info?.endpoint?.videoId != null }
+    } catch (e: Exception) {
+        null
+    }
 }
 
 fun Innertube.VideoItem.Companion.from(content: MusicShelfRenderer.Content): Innertube.VideoItem? {
-    val (mainRuns, otherRuns) = content.runs
+    return try {
+        val (mainRuns, otherRuns) = content.runs
 
-    return Innertube.VideoItem(
-        info = mainRuns
-            .firstOrNull()
-            ?.let(Innertube::Info),
-        authors = otherRuns
-            .getOrNull(otherRuns.lastIndex - 2)
-            ?.map(Innertube::Info),
-        viewsText = otherRuns
-            .getOrNull(otherRuns.lastIndex - 1)
-            ?.firstOrNull()
-            ?.text,
-        durationText = otherRuns
-            .getOrNull(otherRuns.lastIndex)
-            ?.firstOrNull()
-            ?.text,
-        thumbnail = content
-            .thumbnail
-    ).takeIf { it.info?.endpoint?.videoId != null }
+        Innertube.VideoItem(
+            info = mainRuns
+                .firstOrNull()
+                ?.let(Innertube::Info),
+            authors = otherRuns
+                .getOrNull(otherRuns.lastIndex - 2)
+                ?.map(Innertube::Info),
+            viewsText = otherRuns
+                .getOrNull(otherRuns.lastIndex - 1)
+                ?.firstOrNull()
+                ?.text,
+            durationText = otherRuns
+                .getOrNull(otherRuns.lastIndex)
+                ?.firstOrNull()
+                ?.text,
+            thumbnail = content
+                .thumbnail
+        ).takeIf { it.info?.endpoint?.videoId != null }
+    } catch (e: Exception) {
+        null
+    }
 }
 
 fun Innertube.AlbumItem.Companion.from(content: MusicShelfRenderer.Content): Innertube.AlbumItem? {

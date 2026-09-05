@@ -1,18 +1,25 @@
 package com.github.innertube
 
-import com.github.innertube.requests.artistPage
+import com.github.innertube.requests.trending
+import com.github.innertube.requests.relatedPage
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 class TestArtist {
     @Test
-    fun testPritam() = runBlocking {
-        println("Fetching Pritam...")
-        // UCG0hRkR9sXEqdkt6Ff-G80w is A.R. Rahman maybe? Let's just use UC...
-        val pritamId = "UC7XW-FqEosSik0zstF3xKcA" 
-        val artistPage = Innertube.artistPage(pritamId)
-        val data = artistPage?.getOrNull()
-        println("Artist page thumbnail URL: " + data?.thumbnail?.url)
-        println("Artist Name: " + data?.name)
+    fun testTrending() = runBlocking {
+        println("Fetching Trending...")
+        val trendingResult = Innertube.trending()
+        println("Trending isSuccess: ${trendingResult?.isSuccess}, size: ${trendingResult?.getOrNull()?.size}")
+        if (trendingResult?.isFailure == true) {
+            println("Trending error: ${trendingResult.exceptionOrNull()}")
+        }
+    }
+
+    @Test
+    fun testSearchSongs() = runBlocking {
+        println("Fetching SearchSongs('Top Songs')...")
+        val searchResult = com.github.innertube.requests.searchSongs("Top Songs")
+        println("SearchSongs isSuccess: ${searchResult?.isSuccess}, size: ${searchResult?.getOrNull()?.items?.size}")
     }
 }

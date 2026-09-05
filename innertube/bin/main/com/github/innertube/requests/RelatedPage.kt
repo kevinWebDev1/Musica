@@ -20,18 +20,19 @@ suspend fun Innertube.relatedPage(videoId: String) = runCatchingNonCancellable {
         mask("contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.tabRenderer(endpoint,title)")
     }.body<NextResponse>()
 
-    val browseId = nextResponse
+    val tabs = nextResponse
         .contents
         ?.singleColumnMusicWatchNextResultsRenderer
         ?.tabbedRenderer
         ?.watchNextTabbedResultsRenderer
         ?.tabs
-        ?.getOrNull(2)
-        ?.tabRenderer
-        ?.endpoint
-        ?.browseEndpoint
-        ?.browseId
-        ?: return@runCatchingNonCancellable null
+
+    val browseId = tabs?.firstNotNullOfOrNull {
+        it.tabRenderer?.endpoint?.browseEndpoint?.takeIf { browse ->
+            browse.type == "MUSIC_PAGE_TYPE_TRACK_RELATED" || browse.browseId?.startsWith("MPTR") == true
+        }?.browseId
+    } ?: tabs?.getOrNull(2)?.tabRenderer?.endpoint?.browseEndpoint?.browseId
+    ?: return@runCatchingNonCancellable null
 
     val response = client.post(BROWSE) {
         setBody(
@@ -40,38 +41,54 @@ suspend fun Innertube.relatedPage(videoId: String) = runCatchingNonCancellable {
                 browseId = browseId
             )
         )
-        mask("contents.sectionListRenderer.contents.musicCarouselShelfRenderer(header.musicCarouselShelfBasicHeaderRenderer(title,strapline),contents($MUSIC_RESPONSIVE_LIST_ITEM_RENDERER_MASK,$MUSIC_TWO_ROW_ITEM_RENDERER_MASK))")
+        mask("contents")
     }.body<BrowseResponse>()
 
     val sectionListRenderer = response
         .contents
         ?.sectionListRenderer
 
+    val contents = sectionListRenderer?.contents ?: emptyList()
+
+    fun findSectionByKeywords(keywords: List<String>): com.github.innertube.models.SectionListRenderer.Content? {
+        return contents.firstOrNull { content ->
+            val title = content.musicCarouselShelfRenderer?.header?.musicCarouselShelfBasicHeaderRenderer?.title?.runs?.firstOrNull()?.text
+            val strapline = content.musicCarouselShelfRenderer?.header?.musicCarouselShelfBasicHeaderRenderer?.strapline?.runs?.firstOrNull()?.text
+            val text = "$title $strapline"
+            keywords.any { text.contains(it, ignoreCase = true) }
+        }
+    }
+
+    val songsSection = findSectionByKeywords(listOf("You might also like", "Songs", "Tracks", "Like")) ?: contents.getOrNull(0)
+    val playlistsSection = findSectionByKeywords(listOf("Recommended playlists", "Playlists", "Mixes")) ?: contents.getOrNull(1)
+    val albumsSection = findSectionByKeywords(listOf("MORE FROM", "Albums", "Singles", "Releases")) ?: contents.getOrNull(2)
+    val artistsSection = findSectionByKeywords(listOf("Similar artists", "Artists", "Fans also like")) ?: contents.getOrNull(3)
+
     Innertube.RelatedPage(
-        songs = sectionListRenderer
-            ?.findSectionByTitle("You might also like")
+        songs = songsSection
             ?.musicCarouselShelfRenderer
             ?.contents
             ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicResponsiveListItemRenderer)
-            ?.mapNotNull(Innertube.SongItem::from),
-        playlists = sectionListRenderer
-            ?.findSectionByTitle("Recommended playlists")
+            ?.mapNotNull(Innertube.SongItem::from)
+            ?.takeIf { it.isNotEmpty() },
+        playlists = playlistsSection
             ?.musicCarouselShelfRenderer
             ?.contents
             ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicTwoRowItemRenderer)
             ?.mapNotNull(Innertube.PlaylistItem::from)
-            ?.sortedByDescending { it.channel?.name == "YouTube Music" },
-        albums = sectionListRenderer
-            ?.findSectionByStrapline("MORE FROM")
+            ?.sortedByDescending { it.channel?.name == "YouTube Music" }
+            ?.takeIf { it.isNotEmpty() },
+        albums = albumsSection
             ?.musicCarouselShelfRenderer
             ?.contents
             ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicTwoRowItemRenderer)
-            ?.mapNotNull(Innertube.AlbumItem::from),
-        artists = sectionListRenderer
-            ?.findSectionByTitle("Similar artists")
+            ?.mapNotNull(Innertube.AlbumItem::from)
+            ?.takeIf { it.isNotEmpty() },
+        artists = artistsSection
             ?.musicCarouselShelfRenderer
             ?.contents
             ?.mapNotNull(MusicCarouselShelfRenderer.Content::musicTwoRowItemRenderer)
-            ?.mapNotNull(Innertube.ArtistItem::from),
+            ?.mapNotNull(Innertube.ArtistItem::from)
+            ?.takeIf { it.isNotEmpty() },
     )
 }

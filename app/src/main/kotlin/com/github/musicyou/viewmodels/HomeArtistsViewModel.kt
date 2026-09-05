@@ -27,7 +27,7 @@ class HomeArtistsViewModel : ViewModel() {
     }
 
     suspend fun fetchMissingThumbnail(artist: Artist) {
-        if (artist.thumbnailUrl != null) return
+        if (!artist.thumbnailUrl.isNullOrEmpty()) return
         withContext(Dispatchers.IO) {
             try {
                 val page = Innertube.artistPage(artist.id)?.getOrNull()

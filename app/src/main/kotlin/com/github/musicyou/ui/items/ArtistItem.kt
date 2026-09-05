@@ -89,18 +89,12 @@ fun LocalArtistItem(
                     )
                 }
             } else if (artist.thumbnailUrl == "") {
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(itemSize / 2),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                ShimmerHost {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                     )
                 }
             } else {

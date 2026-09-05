@@ -107,6 +107,8 @@ fun OnboardingScreen(
             savedRegion.isNotBlank()) {
             android.util.Log.d("OnboardingDebug", "SMART SKIP - Complete profile found, skipping onboarding")
             // Profile is complete - skip to app
+            // Add a delay to ensure NavBackStackEntry reaches CREATED/RESUMED state before we pop it
+            delay(200)
             onComplete()
             return@LaunchedEffect
         }

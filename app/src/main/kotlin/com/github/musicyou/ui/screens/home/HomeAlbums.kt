@@ -88,6 +88,10 @@ fun HomeAlbums(
                 items = viewModel.items,
                 key = Album::id
             ) { album ->
+                LaunchedEffect(album.id) {
+                    viewModel.fetchMissingThumbnail(album)
+                }
+                
                 LocalAlbumItem(
                     modifier = Modifier.animateItem(),
                     album = album,

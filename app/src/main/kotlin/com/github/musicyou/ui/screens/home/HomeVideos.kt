@@ -53,7 +53,10 @@ import com.github.musicyou.utils.forcePlay
 import com.github.innertube.requests.searchPage
 import com.github.innertube.requests.song
 import com.github.innertube.utils.from
+import com.github.innertube.requests.searchSuggestions
 import androidx.media3.common.MediaItem
+import kotlinx.coroutines.async
+import com.github.musicyou.utils.asMediaItem
 
 enum class LocalMediaType {
     ALL, FOLDERS, MUSIC, YOUTUBE
@@ -76,7 +79,9 @@ fun HomeVideos(
     val searchQuery by viewModel.searchQuery.collectAsState()
 
     var selectedFolder by remember { mutableStateOf<VideoFolder?>(null) }
-    var selectedMediaType by remember { mutableStateOf(LocalMediaType.ALL) }
+    val selectedMediaTypeIndex by viewModel.selectedMediaTypeIndex.collectAsState()
+    val selectedMediaType = LocalMediaType.entries[selectedMediaTypeIndex]
+    val setSelectedMediaType: (LocalMediaType) -> Unit = { viewModel.selectedMediaTypeIndex.value = it.ordinal }
     
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
@@ -173,22 +178,22 @@ fun HomeVideos(
                         FilterPill(
                             text = "All",
                             selected = selectedMediaType == LocalMediaType.ALL,
-                            onClick = { selectedMediaType = LocalMediaType.ALL }
+                            onClick = { setSelectedMediaType(LocalMediaType.ALL) }
                         )
                         FilterPill(
                             text = "Folders",
                             selected = selectedMediaType == LocalMediaType.FOLDERS,
-                            onClick = { selectedMediaType = LocalMediaType.FOLDERS }
+                            onClick = { setSelectedMediaType(LocalMediaType.FOLDERS) }
                         )
                         FilterPill(
                             text = "Music",
                             selected = selectedMediaType == LocalMediaType.MUSIC,
-                            onClick = { selectedMediaType = LocalMediaType.MUSIC }
+                            onClick = { setSelectedMediaType(LocalMediaType.MUSIC) }
                         )
                         FilterPill(
                             text = "YouTube",
                             selected = selectedMediaType == LocalMediaType.YOUTUBE,
-                            onClick = { selectedMediaType = LocalMediaType.YOUTUBE }
+                            onClick = { setSelectedMediaType(LocalMediaType.YOUTUBE) }
                         )
                     }
                 }
@@ -391,23 +396,44 @@ fun FolderItem(
 fun YouTubeVideoSearch() {
     val binder = LocalPlayerServiceBinder.current
     val playerPadding = LocalPlayerPadding.current
-    var query by remember { mutableStateOf("") }
-    var searchResults by remember { mutableStateOf<List<androidx.media3.common.MediaItem>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
-    var hasSearched by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val viewModel: VideosViewModel = viewModel()
+    val query by viewModel.ytSearchQuery.collectAsState()
+    val setQuery: (String) -> Unit = { viewModel.ytSearchQuery.value = it }
+    
+    val searchResults by viewModel.ytSearchResults.collectAsState()
+    val setSearchResults: (List<androidx.media3.common.MediaItem>) -> Unit = { viewModel.ytSearchResults.value = it }
+    
+    val isLoading by viewModel.ytIsLoading.collectAsState()
+    val setIsLoading: (Boolean) -> Unit = { viewModel.ytIsLoading.value = it }
+    
+    val hasSearched by viewModel.ytHasSearched.collectAsState()
+    val setHasSearched: (Boolean) -> Unit = { viewModel.ytHasSearched.value = it }
+    
+    val errorMessage by viewModel.ytErrorMessage.collectAsState()
+    val setErrorMessage: (String?) -> Unit = { viewModel.ytErrorMessage.value = it }
+    
+    val suggestionsResult by viewModel.ytSuggestionsResult.collectAsState()
+    val setSuggestionsResult: (Result<List<String>>?) -> Unit = { viewModel.ytSuggestionsResult.value = it }
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
 
-    val performSearch = {
-        if (query.isNotBlank()) {
+    LaunchedEffect(query) {
+        setSuggestionsResult(if (query.isNotEmpty()) {
+            kotlinx.coroutines.delay(200)
+            Innertube.searchSuggestions(input = query) as Result<List<String>>
+        } else null)
+    }
+
+    val performSearch = { searchQuery: String ->
+        val effectiveQuery = searchQuery.ifBlank { query }
+        if (effectiveQuery.isNotBlank()) {
             focusManager.clearFocus()
             coroutineScope.launch(Dispatchers.IO) {
-                isLoading = true
-                errorMessage = null
+                setIsLoading(true)
+                setErrorMessage(null)
                 try {
-                    val videoId = extractYouTubeId(query)
-                    android.util.Log.d("YouTubeSearch", "Parsed videoId: $videoId from query: $query")
+                    val videoId = extractYouTubeId(effectiveQuery)
+                    android.util.Log.d("YouTubeSearch", "Parsed videoId: $videoId from query: $effectiveQuery")
                     if (videoId != null) {
                         val songResult = Innertube.song(videoId)
                         android.util.Log.d("YouTubeSearch", "Song result for $videoId: ${songResult?.getOrNull()}")
@@ -415,7 +441,7 @@ fun YouTubeVideoSearch() {
                             android.util.Log.d("YouTubeSearch", "Song details: name=${song.info?.name}, authors=${song.authors}")
                             val mediaItem = song.asVideoMediaItem
                             android.util.Log.d("YouTubeSearch", "Created MediaItem: id=${mediaItem.mediaId}, title=${mediaItem.mediaMetadata.title}, artist=${mediaItem.mediaMetadata.artist}")
-                            searchResults = listOf(mediaItem)
+                            setSearchResults(listOf(mediaItem))
                             withContext(Dispatchers.Main) {
                                 android.util.Log.d("YouTubeSearch", "Calling forcePlay for MediaItem: ${mediaItem.mediaId}")
                                 val embedMediaItem = if (mediaItem.mediaId.startsWith("youtube-embed:")) {
@@ -427,24 +453,27 @@ fun YouTubeVideoSearch() {
                             }
                         } ?: run {
                             android.util.Log.d("YouTubeSearch", "Song result was null or empty for videoId: $videoId")
-                            searchResults = emptyList()
+                            setSearchResults(emptyList())
                         }
                     } else {
-                        val searchPage = Innertube.searchPage(
-                            query = query,
+                        val searchResult = Innertube.searchPage(
+                            query = effectiveQuery,
                             params = Innertube.SearchFilter.Video.value,
                             fromMusicShelfRendererContent = { Innertube.VideoItem.from(it) }
-                        )?.getOrNull()
+                        )
+                        android.util.Log.d("YouTubeSearch", "Search result isSuccess=${searchResult?.isSuccess}, exception=${searchResult?.exceptionOrNull()}")
+                        
+                        val searchPage = searchResult?.getOrNull()
                         android.util.Log.d("YouTubeSearch", "Search page returned ${searchPage?.items?.size} items")
-                        searchResults = searchPage?.items?.map { it.asVideoMediaItem } ?: emptyList()
+                        setSearchResults(searchPage?.items?.map { it.asVideoMediaItem } ?: emptyList())
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("YouTubeSearch", "Error during YouTube search", e)
-                    errorMessage = "Search failed. Check your connection."
-                    searchResults = emptyList()
+                    setErrorMessage("Search failed. Check your connection.")
+                    setSearchResults(emptyList())
                 } finally {
-                    isLoading = false
-                    hasSearched = true
+                    setIsLoading(false)
+                    setHasSearched(true)
                 }
             }
         }
@@ -453,7 +482,7 @@ fun YouTubeVideoSearch() {
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         OutlinedTextField(
             value = query,
-            onValueChange = { query = it },
+            onValueChange = { setQuery(it) },
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             placeholder = { Text("Paste YouTube link...") },
             leadingIcon = {
@@ -462,17 +491,19 @@ fun YouTubeVideoSearch() {
             trailingIcon = {
                 if (query.isNotEmpty()) {
                     IconButton(onClick = {
-                        query = ""
-                        searchResults = emptyList()
-                        hasSearched = false
-                        errorMessage = null
+                        setQuery("")
+                        setSearchResults(emptyList())
+                        setHasSearched(false)
+                        setErrorMessage(null)
                     }) {
                         Icon(Icons.Default.Clear, contentDescription = "Clear")
                     }
                 }
             },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { performSearch() }),
+            keyboardActions = KeyboardActions(
+                onSearch = { performSearch("") }
+            ),
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -501,7 +532,7 @@ fun YouTubeVideoSearch() {
                         color = MaterialTheme.colorScheme.error
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    FilledTonalButton(onClick = { performSearch() }) {
+                    FilledTonalButton(onClick = { performSearch("") }) {
                         Text("Retry")
                     }
                 }
@@ -550,7 +581,24 @@ fun YouTubeVideoSearch() {
                                 mediaItem.buildUpon().setMediaId("youtube-embed:${mediaItem.mediaId}").build()
                             }
                             android.util.Log.d("YouTubeSearch", "Calling hybridPlaybackEngine.loadMediaItem for: ${embedMediaItem.mediaId}")
-                            binder?.hybridPlaybackEngine?.loadMediaItem(embedMediaItem, autoPlay = true)
+                            binder?.hybridPlaybackEngine?.loadMediaItem(embedMediaItem, 0, true)
+                        }
+                    )
+                }
+            }
+        } else if (!hasSearched && query.isNotEmpty() && suggestionsResult?.getOrNull()?.isNotEmpty() == true) {
+            val suggestions = suggestionsResult?.getOrNull() ?: emptyList()
+            LazyColumn(
+                contentPadding = PaddingValues(bottom = 16.dp + playerPadding),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(suggestions) { suggestion ->
+                    ListItem(
+                        headlineContent = { Text(text = suggestion) },
+                        leadingContent = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.clickable {
+                            setQuery(suggestion)
+                            performSearch(suggestion)
                         }
                     )
                 }

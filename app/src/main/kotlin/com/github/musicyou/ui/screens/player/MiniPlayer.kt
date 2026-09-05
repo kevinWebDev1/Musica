@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import coil3.compose.AsyncImage
+import coil3.request.crossfade
 import com.github.musicyou.LocalPlayerServiceBinder
 import com.github.musicyou.ui.styling.Dimensions
 import com.github.musicyou.ui.styling.neumorphicRaised
@@ -103,8 +104,14 @@ fun MiniPlayer(
                 },
                 leadingContent = {
                     Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val request = coil3.request.ImageRequest.Builder(context)
+                            .data(mediaItem.mediaMetadata.artworkUri.thumbnail(Dimensions.thumbnails.song.px))
+                            .crossfade(true)
+                            .build()
+
                         AsyncImage(
-                            model = mediaItem.mediaMetadata.artworkUri.thumbnail(Dimensions.thumbnails.song.px),
+                            model = request,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -114,6 +121,7 @@ fun MiniPlayer(
                                     cornerRadius = 12.dp
                                 )
                                 .clip(MaterialTheme.shapes.medium)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .size(52.dp)
                         )
                         if (isYouTube) {

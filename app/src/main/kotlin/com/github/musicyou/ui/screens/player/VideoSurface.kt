@@ -58,6 +58,8 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.viewinterop.AndroidView
@@ -130,6 +132,7 @@ fun VideoSurface(
     val context = LocalContext.current
     val activity = context as? Activity
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
     
     // Default 50% brightness
     LaunchedEffect(Unit) {
@@ -299,7 +302,7 @@ fun VideoSurface(
                         
                         // Initial Speed Zone
                         val zoneHeight = screenHeight / 3
-                        activeZoneIndex = (startY / zoneHeight).toInt().coerceIn(0, 2)
+                        activeZoneIndex = 1 // Default to middle speed (2.0x)
                         
                         // PINCH DETECTION CHECK
                         // Just consume the down initially so we track it
@@ -541,14 +544,9 @@ fun VideoSurface(
                             
                         } else {
                             // Hold (dragType == 0) -> Speed Zone
-                            currentSpeedMultiplier = when(activeZoneIndex) {
-                                0 -> ffTopSpeed
-                                1 -> ffMidSpeed
-                                else -> ffBotSpeed
-                            }
-                            
-                            
-                            // baselineSpeed is used instead of originalSpeed (passed from Player.kt)
+                            activeZoneIndex = 1
+                            val speedsList = listOf(ffTopSpeed, ffMidSpeed, ffBotSpeed, 1.25f)
+                            currentSpeedMultiplier = speedsList[activeZoneIndex]
                             
                             if (isLeftZone) {
                                 isRewinding = true
@@ -557,18 +555,22 @@ fun VideoSurface(
                             }
                             onGestureActive(true)
                             
+                            val screenCenter = size.height / 2f
+                            val pillHeightPx = 72 * density // Approx height of each UI pill including padding
+                            
                             do {
                                 val event = awaitPointerEvent()
                                 event.changes.forEach { 
                                     if (it.pressed) {
-                                        val currentY = it.position.y
-                                        activeZoneIndex = (currentY / zoneHeight).toInt().coerceIn(0, 2)
-                                        
-                                         currentSpeedMultiplier = when(activeZoneIndex) {
-                                            0 -> ffTopSpeed
-                                            1 -> ffMidSpeed
-                                            else -> ffBotSpeed
+                                        val deltaFromCenter = it.position.y - screenCenter
+                                        activeZoneIndex = when {
+                                            deltaFromCenter < -pillHeightPx -> 0 // Top pill (3.0x)
+                                            deltaFromCenter < 0 -> 1             // Middle-top pill (2.0x)
+                                            deltaFromCenter < pillHeightPx -> 2  // Middle-bottom pill (1.5x)
+                                            else -> 3                            // Bottom pill (1.25x)
                                         }
+                                        
+                                        currentSpeedMultiplier = speedsList[activeZoneIndex]
                                         
                                         it.consume()
                                     }
@@ -668,18 +670,21 @@ fun VideoSurface(
 
 
         // 5. Edge Speed Overlays
+        val speedsList = listOf(ffTopSpeed, ffMidSpeed, ffBotSpeed, 1.25f)
         if (isBoosting) {
             EdgeSpeedOverlay(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 activeZoneIndex = activeZoneIndex,
-                isRewind = false
+                isRewind = false,
+                speeds = speedsList
             )
         }
         if (isRewinding) {
             EdgeSpeedOverlay(
                 modifier = Modifier.align(Alignment.CenterStart),
                 activeZoneIndex = activeZoneIndex,
-                isRewind = true
+                isRewind = true,
+                speeds = speedsList
             )
         }
     }
@@ -693,47 +698,68 @@ data class PlayPauseData(val isPlaying: Boolean)
 fun EdgeSpeedOverlay(
     modifier: Modifier = Modifier,
     activeZoneIndex: Int, 
-    isRewind: Boolean
+    isRewind: Boolean,
+    speeds: List<Float>
 ) {
-    val speeds = listOf(3.0f, 2.0f, 1.5f)
     
     Column(
         modifier = modifier, 
-        verticalArrangement = Arrangement.Center, 
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically), 
         horizontalAlignment = if (isRewind) Alignment.Start else Alignment.End
     ) {
         speeds.forEachIndexed { index, speed ->
             val isSelected = index == activeZoneIndex
             val shape = if (!isRewind) {
-                RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                RoundedCornerShape(topStart = 50.dp, bottomStart = 50.dp)
             } else {
-                RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+                RoundedCornerShape(topEnd = 50.dp, bottomEnd = 50.dp)
             }
+            
+            val targetWidth = if (isSelected) 180.dp else 100.dp
+            val animatedWidth by androidx.compose.animation.core.animateDpAsState(targetWidth)
             
             Box(
                 modifier = Modifier
-                    .width(100.dp) 
-                    .padding(vertical = 2.dp) 
+                    .width(animatedWidth) 
                     .clip(shape)
                     .background(
-                        if (isSelected) Color.White.copy(alpha = 0.25f) 
-                        else Color.Black.copy(alpha = 0.4f)
+                        if (isSelected) Color(0xFF444444) 
+                        else Color(0xFF222222).copy(alpha = 0.8f)
                     )
-                    .padding(horizontal = 24.dp, vertical = 24.dp) 
+                    .padding(vertical = 16.dp, horizontal = 24.dp) 
             ) {
-                val alpha = if (isSelected) 1f else 0.6f
-                val text = if (isRewind) "<< ${speed.toString().removeSuffix(".0")}x" 
-                           else "${speed.toString().removeSuffix(".0")}x"
+                val alpha = if (isSelected) 1f else 0.5f
+                val speedText = "${speed.toString().removeSuffix(".0")}X"
 
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        shadow = if (isSelected) Shadow(Color.White, blurRadius = 15f) else Shadow(blurRadius = 0f)
-                    ),
-                    color = Color.White.copy(alpha = alpha),
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier.align(Alignment.Center)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (isRewind) Arrangement.Start else Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isSelected) {
+                        if (!isRewind) {
+                            AnimatedDoubleArrowIcon(isRewind = false)
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = "$speedText Speed",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (isRewind) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            AnimatedDoubleArrowIcon(isRewind = true)
+                        }
+                    } else {
+                        Text(
+                            text = speedText,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White.copy(alpha = alpha),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
         }
     }
@@ -762,5 +788,60 @@ fun LockProgressOverlay(
             tint = Color.White,
             modifier = Modifier.size(32.dp)
         )
+    }
+}
+
+@Composable
+fun AnimatedDoubleArrowIcon(isRewind: Boolean) {
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "arrows")
+    
+    val alpha1 by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween<Float>(400, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "alpha1"
+    )
+    
+    val alpha2 by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.2f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween<Float>(400, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "alpha2"
+    )
+    
+    Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+        if (isRewind) {
+            Icon(
+                imageVector = androidx.compose.material.icons.Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = alpha2),
+                modifier = Modifier.size(20.dp).graphicsLayer(rotationZ = 180f)
+            )
+            Icon(
+                imageVector = androidx.compose.material.icons.Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = alpha1),
+                modifier = Modifier.size(20.dp).graphicsLayer(rotationZ = 180f)
+            )
+        } else {
+            Icon(
+                imageVector = androidx.compose.material.icons.Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = alpha1),
+                modifier = Modifier.size(20.dp)
+            )
+            Icon(
+                imageVector = androidx.compose.material.icons.Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = alpha2),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }

@@ -62,6 +62,7 @@ import com.github.musicyou.utils.hasReviewedKey
 import com.github.musicyou.utils.lastReviewRemindTimeKey
 import com.github.musicyou.utils.launchCountKey
 import com.github.musicyou.utils.preferences
+import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.ui.components.ReviewReminderDialog
 import androidx.core.content.edit
 import com.github.musicyou.auth.AuthManager
@@ -208,6 +209,7 @@ class MainActivity : ComponentActivity() {
                         if (value == SheetValue.Hidden) {
                             binder?.stopRadio()
                             binder?.player?.clearMediaItems()
+                            binder?.hybridPlaybackEngine?.youtubeEngine?.release()
                         }
 
                         return@rememberStandardBottomSheetState true
@@ -278,6 +280,78 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
+                        val videoQualityPref by com.github.musicyou.utils.observePreference(
+                            com.github.musicyou.utils.videoQualityKey,
+                            com.github.musicyou.enums.VideoQuality.AUTO
+                        )
+
+                        var lastMediaIdForQuality by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                        val currentMediaIdForQuality = binder?.youtubeEngine?.playbackState?.value?.mediaId
+
+                        LaunchedEffect(videoQualityPref, currentMediaIdForQuality) {
+                            val isQualityChange = lastMediaIdForQuality != null && lastMediaIdForQuality == currentMediaIdForQuality
+                            lastMediaIdForQuality = currentMediaIdForQuality
+                            
+                            if (videoQualityPref == com.github.musicyou.enums.VideoQuality.AUTO) return@LaunchedEffect
+                            if (currentMediaIdForQuality.isNullOrBlank()) return@LaunchedEffect
+                            
+                            // Give the player a moment to load the iframe
+                            kotlinx.coroutines.delay(1000)
+                            
+                            val targetSize = when (videoQualityPref) {
+                                com.github.musicyou.enums.VideoQuality.QUALITY_360P -> 640 to 360
+                                com.github.musicyou.enums.VideoQuality.QUALITY_720P -> 1280 to 720
+                                com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> 1920 to 1080
+                                com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> 2560 to 1440
+                                com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> 3840 to 2160
+                                else -> return@LaunchedEffect
+                            }
+                            
+                            val (w, h) = targetSize
+                            youtubePlayerView?.findWebView()?.let { webView ->
+                                android.util.Log.d("YouTubeQuality", "Injecting CSS scaling script for $w x $h")
+                                val js = """
+                                    (function() {
+                                        var iframe = document.querySelector('iframe');
+                                        if (iframe) {
+                                            var targetW = $w;
+                                            var targetH = $h;
+                                            
+                                            var wMultiplier = targetW / window.innerWidth;
+                                            var hMultiplier = targetH / window.innerHeight;
+                                            var maxMultiplier = Math.max(wMultiplier, hMultiplier, 1.0);
+                                            
+                                            iframe.style.width = (100 * maxMultiplier) + '%';
+                                            iframe.style.height = (100 * maxMultiplier) + '%';
+                                            iframe.style.position = 'absolute';
+                                            iframe.style.top = '0';
+                                            iframe.style.left = '0';
+                                            iframe.style.transformOrigin = 'top left';
+                                            iframe.style.transform = 'scale(' + (1 / maxMultiplier) + ')';
+                                            
+                                            console.log('YouTubeQuality: Spoofed iframe CSS bounds multiplier: ' + maxMultiplier);
+                                        } else {
+                                            console.log('YouTubeQuality: youtube-player iframe not found!');
+                                        }
+                                    })();
+                                """.trimIndent()
+                                webView.evaluateJavascript(js) {
+                                    if (isQualityChange) {
+                                        val videoId = currentMediaIdForQuality.removePrefix("youtube-embed:")
+                                        val isPlaying = binder?.youtubeEngine?.playbackState?.value?.isPlaying == true
+                                        val currentPosSec = (binder?.youtubeEngine?.playbackState?.value?.currentPositionMs ?: 0L) / 1000f
+                                        
+                                        android.util.Log.d("YouTubeQuality", "Forcing video reload for quality change: $videoId at $currentPosSec")
+                                        if (isPlaying) {
+                                            ytPlayerRef.value?.loadVideo(videoId, currentPosSec)
+                                        } else {
+                                            ytPlayerRef.value?.cueVideo(videoId, currentPosSec)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // --- Centralised command state machine ---
                         LaunchedEffect(ytPlayerRef.value, binder?.youtubeEngine) {
                             val ytPlayer = ytPlayerRef.value ?: return@LaunchedEffect
@@ -290,7 +364,9 @@ class MainActivity : ComponentActivity() {
                             engine.playbackState.collect { state ->
                                 val videoId = state.mediaId?.removePrefix("youtube-embed:")
                                 if (videoId.isNullOrBlank()) {
-                                    android.util.Log.d("YouTubePlayerRetained", "Engine state update ignored: no video ID")
+                                    android.util.Log.d("YouTubePlayerRetained", "Engine state update has no video ID. Pausing player.")
+                                    ytPlayer.pause()
+                                    lastVideoId = null
                                     return@collect
                                 }
 
@@ -321,12 +397,14 @@ class MainActivity : ComponentActivity() {
 
                         // Build the composable that consumers invoke via LocalYouTubePlayer
                         val youtubePlayerComposable: (@Composable (Modifier) -> Unit)? =
-                            youtubePlayerView?.let { view ->
-                                @Composable { modifier: Modifier ->
-                                    com.github.musicyou.ui.screens.player.YouTubePlayerSurface(
-                                        retainedView = view,
-                                        modifier = modifier
-                                    )
+                            remember(youtubePlayerView) {
+                                youtubePlayerView?.let { view ->
+                                    @Composable { modifier: Modifier ->
+                                        com.github.musicyou.ui.screens.player.YouTubePlayerSurface(
+                                            retainedView = view,
+                                            modifier = modifier
+                                        )
+                                    }
                                 }
                             }
 
@@ -587,3 +665,15 @@ class MainActivity : ComponentActivity() {
 val LocalPlayerServiceBinder = staticCompositionLocalOf<PlayerService.Binder?> { null }
 val LocalYouTubePlayer = staticCompositionLocalOf<(@Composable (Modifier) -> Unit)?> { null }
 val LocalPlayerPadding = compositionLocalOf { 0.dp }
+
+fun android.view.ViewGroup.findWebView(): android.webkit.WebView? {
+    for (i in 0 until childCount) {
+        val child = getChildAt(i)
+        if (child is android.webkit.WebView) return child
+        if (child is android.view.ViewGroup) {
+            val wv = child.findWebView()
+            if (wv != null) return wv
+        }
+    }
+    return null
+}

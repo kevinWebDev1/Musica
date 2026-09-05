@@ -28,6 +28,17 @@ class VideosViewModel(application: Application) : AndroidViewModel(application) 
     private val _allMusic = MutableStateFlow<List<Song>>(emptyList())
 
     val searchQuery = MutableStateFlow("")
+    
+    // UI State for HomeVideos screen that needs to survive navigation backstack changes
+    val selectedMediaTypeIndex = MutableStateFlow(0) // 0=ALL, 1=FOLDERS, 2=MUSIC, 3=YOUTUBE
+    
+    // YouTube Video Search State
+    val ytSearchQuery = MutableStateFlow("")
+    val ytSearchResults = MutableStateFlow<List<androidx.media3.common.MediaItem>>(emptyList())
+    val ytHasSearched = MutableStateFlow(false)
+    val ytErrorMessage = MutableStateFlow<String?>(null)
+    val ytIsLoading = MutableStateFlow(false)
+    val ytSuggestionsResult = MutableStateFlow<Result<List<String>>?>(null)
 
     val filteredVideoFolders = combine(_videoFolders, searchQuery) { folders, query ->
         if (query.isBlank()) {

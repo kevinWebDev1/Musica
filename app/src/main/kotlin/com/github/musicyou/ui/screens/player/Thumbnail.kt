@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
@@ -174,21 +175,31 @@ fun Thumbnail(
                         .width(thumbnailSizeDp)
                         .height(height.value)
                 ) {
-                    AsyncImage(
-                        model = currentWindow.mediaItem.mediaMetadata.artworkUri.thumbnail(
-                            size = thumbnailSizePx
-                        ),
-                        contentDescription = null,
-                        error = painterResource(R.drawable.app_icon),
-                        fallback = painterResource(R.drawable.app_icon),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .combinedClickable(
-                                onClick = { onShowLyrics(true) },
-                                onLongClick = { onShowStatsForNerds(true) }
-                            )
-                            .fillMaxSize()
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // Fast-loading low-quality fallback (from cache)
+                        AsyncImage(
+                            model = currentWindow.mediaItem.mediaMetadata.artworkUri.thumbnail(
+                                size = Dimensions.thumbnails.song.px
+                            ),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        // High-quality primary image
+                        AsyncImage(
+                            model = currentWindow.mediaItem.mediaMetadata.artworkUri.thumbnail(
+                                size = thumbnailSizePx
+                            ),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .combinedClickable(
+                                    onClick = { onShowLyrics(true) },
+                                    onLongClick = { onShowStatsForNerds(true) }
+                                )
+                                .fillMaxSize()
+                        )
+                    }
 
                     Lyrics(
                         mediaId = currentWindow.mediaItem.mediaId,
@@ -248,14 +259,14 @@ fun Thumbnail(
 
         if (playerGesturesEnabled) {
             SwipeableActionsBox(
-                modifier = modifier.clip(shape = MaterialTheme.shapes.large),
+                modifier = modifier.clip(shape = RoundedCornerShape(24.dp)),
                 startActions = listOf(startAction),
                 endActions = listOf(endAction),
                 content = thumbnailContent
             )
         } else {
             Box(
-                modifier = modifier.clip(shape = MaterialTheme.shapes.large),
+                modifier = modifier.clip(shape = RoundedCornerShape(24.dp)),
                 content = thumbnailContent
             )
         }

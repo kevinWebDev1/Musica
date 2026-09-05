@@ -19,6 +19,16 @@ import com.github.innertube.Innertube
 import com.github.musicyou.models.Song
 import com.github.musicyou.ui.styling.px
 import com.github.musicyou.utils.thumbnail
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.firstOrNull
+import com.github.musicyou.Database
+import com.github.musicyou.LocalPlayerServiceBinder
 
 @Composable
 fun SongItem(
@@ -29,7 +39,24 @@ fun SongItem(
     onLongClick: () -> Unit,
     trailingContent: @Composable (() -> Unit)? = null
 ) {
+    val binder = LocalPlayerServiceBinder.current
+    var isDownloaded by remember { mutableStateOf(false) }
+
+    val videoId = song.info?.endpoint?.videoId
+    if (videoId != null) {
+        LaunchedEffect(videoId) {
+            withContext(Dispatchers.IO) {
+                val format = Database.format(videoId).firstOrNull()
+                val contentLength = format?.contentLength
+                if (contentLength != null) {
+                    isDownloaded = binder?.cache?.isCached(videoId, 0, contentLength) == true
+                }
+            }
+        }
+    }
+
     ListItemContainer(
+        isDownloaded = isDownloaded,
         modifier = modifier,
         isPlaying = isPlaying,
         title = song.info?.name ?: "",
@@ -61,7 +88,21 @@ fun LocalSongItem(
     onThumbnailContent: @Composable (BoxScope.() -> Unit)? = null,
     trailingContent: @Composable (() -> Unit)? = null
 ) {
+    val binder = LocalPlayerServiceBinder.current
+    var isDownloaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(song.id) {
+        withContext(Dispatchers.IO) {
+            val format = Database.format(song.id).firstOrNull()
+            val contentLength = format?.contentLength
+            if (contentLength != null) {
+                isDownloaded = binder?.cache?.isCached(song.id, 0, contentLength) == true
+            }
+        }
+    }
+
     ListItemContainer(
+        isDownloaded = isDownloaded,
         modifier = modifier,
         isPlaying = isPlaying,
         title = song.title,
@@ -107,7 +148,21 @@ fun MediaSongItem(
     onThumbnailContent: @Composable (() -> Unit)? = null,
     trailingContent: @Composable (() -> Unit)? = null
 ) {
+    val binder = LocalPlayerServiceBinder.current
+    var isDownloaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(song.mediaId) {
+        withContext(Dispatchers.IO) {
+            val format = Database.format(song.mediaId).firstOrNull()
+            val contentLength = format?.contentLength
+            if (contentLength != null) {
+                isDownloaded = binder?.cache?.isCached(song.mediaId, 0, contentLength) == true
+            }
+        }
+    }
+
     ListItemContainer(
+        isDownloaded = isDownloaded,
         modifier = modifier,
         isPlaying = isPlaying,
         title = song.mediaMetadata.title.toString(),

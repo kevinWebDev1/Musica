@@ -194,6 +194,7 @@ fun ListItemContainer(
     modifier: Modifier = Modifier,
     isPlaceholder: Boolean = false,
     isPlaying: Boolean = false,
+    isDownloaded: Boolean = false,
     title: String,
     subtitle: String? = null,
     onClick: (() -> Unit)? = null,
@@ -252,12 +253,22 @@ fun ListItemContainer(
                     TextPlaceholder()
                 } else {
                     subtitle?.let {
-                        Text(
-                            text = subtitle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = neumorphicColors.onBackground.copy(alpha = 0.7f) // Subtitle color
-                        )
+                        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            if (isDownloaded) {
+                                androidx.compose.material3.Icon(
+                                    painter = androidx.compose.ui.res.painterResource(com.github.musicyou.R.drawable.offline),
+                                    contentDescription = "Downloaded",
+                                    tint = neumorphicColors.onBackground.copy(alpha = 0.7f),
+                                    modifier = Modifier.padding(end = 4.dp).height(14.dp).aspectRatio(1f)
+                                )
+                            }
+                            Text(
+                                text = subtitle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = neumorphicColors.onBackground.copy(alpha = 0.7f) // Subtitle color
+                            )
+                        }
                     }
                 }
             },

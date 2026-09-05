@@ -190,3 +190,23 @@ fun observePreference(key: String, defaultValue: Long): androidx.compose.runtime
     }
     return state
 }
+
+@Composable
+inline fun <reified T : Enum<T>> observePreference(key: String, defaultValue: T): androidx.compose.runtime.State<T> {
+    val context = LocalContext.current
+    val prefs = remember { context.preferences }
+    val state = remember { mutableStateOf(prefs.getEnum(key, defaultValue)) }
+
+    DisposableEffect(key) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, changedKey ->
+            if (changedKey == key) {
+                state.value = sharedPreferences.getEnum(key, defaultValue)
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+    return state
+}

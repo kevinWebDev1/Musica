@@ -127,12 +127,10 @@ val Song.asMediaItem: MediaItem
         .build()
 
 fun String?.thumbnail(size: Int): String? {
-    if (this == null) return null
-    val base = this.substringBefore("=")
+    val trimmedUrl = this?.replace(Regex("-rj-.*$"), "-rj")
     return when {
-        this.startsWith("https://lh3.googleusercontent.com") -> "$base=w$size-h$size-e365-rj-l80"
-        this.startsWith("https://yt3.ggpht.com") || this.startsWith("https://yt3.googleusercontent.com") -> "$base=s$size-c-k-c0x00ffffff-no-rj"
-        this.startsWith("https://i.ytimg.com/") -> this.replace(Regex("[a-zA-Z]*default\\.jpg"), "hq720.jpg")
+        this?.startsWith("https://lh3") == true -> "$trimmedUrl-w$size-h$size"
+        this?.startsWith("https://yt3") == true -> "$trimmedUrl-w$size-h$size-s$size"
         else -> this
     }
 }

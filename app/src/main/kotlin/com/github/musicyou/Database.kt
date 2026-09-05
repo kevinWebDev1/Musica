@@ -158,6 +158,12 @@ interface Database {
     @Query("SELECT * FROM Artist WHERE id = :id")
     fun artist(id: String): Flow<Artist?>
 
+    @Query("SELECT * FROM Artist WHERE thumbnailUrl IS NULL OR thumbnailUrl = '' LIMIT 20")
+    fun artistsWithoutThumbnails(): List<Artist>
+
+    @Query("SELECT * FROM Album WHERE thumbnailUrl IS NULL OR thumbnailUrl = '' LIMIT 20")
+    fun albumsWithoutThumbnails(): List<Album>
+
     @Query("SELECT * FROM Artist WHERE bookmarkedAt IS NOT NULL OR id IN (SELECT artistId FROM SongArtistMap JOIN Song ON songId = Song.id WHERE totalPlayTimeMs > 0) ORDER BY name DESC")
     fun artistsByNameDesc(): Flow<List<Artist>>
 
@@ -407,7 +413,11 @@ interface Database {
 
         mediaItem.mediaMetadata.extras?.getString("albumId")?.let { albumId ->
             insert(
-                Album(id = albumId, title = mediaItem.mediaMetadata.albumTitle?.toString()),
+                Album(
+                    id = albumId, 
+                    title = mediaItem.mediaMetadata.albumTitle?.toString(),
+                    thumbnailUrl = mediaItem.mediaMetadata.artworkUri?.toString()
+                ),
                 SongAlbumMap(songId = song.id, albumId = albumId, position = null)
             )
         }

@@ -10,6 +10,7 @@ import coil3.request.crossfade
 import com.github.innertube.Innertube
 import com.github.innertube.requests.visitorData
 import com.github.musicyou.enums.CoilDiskCacheMaxSize
+import com.github.musicyou.utils.BackgroundThumbnailSync
 import com.github.musicyou.utils.coilDiskCacheMaxSizeKey
 import com.github.musicyou.utils.getEnum
 import com.github.musicyou.utils.preferences
@@ -28,6 +29,8 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
         GlobalScope.launch {
             if (Innertube.visitorData.isNullOrBlank()) Innertube.visitorData =
                 Innertube.visitorData().getOrNull()
+                
+            BackgroundThumbnailSync.start(this)
         }
     }
 

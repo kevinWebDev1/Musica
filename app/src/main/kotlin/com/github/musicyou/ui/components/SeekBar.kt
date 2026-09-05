@@ -43,7 +43,7 @@ fun SeekBar(
     color: Color,
     backgroundColor: Color,
     modifier: Modifier = Modifier,
-    barHeight: Dp = 10.dp, // Increased default height for deeper effect
+    barHeight: Dp = 4.dp, // Modern thin look
     shape: Shape = CircleShape,
     drawSteps: Boolean = false,
 ) {
@@ -128,6 +128,16 @@ fun SeekBar(
                 .align(Alignment.CenterStart)
                 .clip(CircleShape)
                 .background(color)
+        )
+
+        // Thumb (Dot)
+        val thumbRadius = 6.dp
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = with(density) { (width * progress.coerceIn(0f, 1f)).toDp() } - thumbRadius)
+                .size(thumbRadius * 2)
+                .background(color, CircleShape)
         )
     }
 }
