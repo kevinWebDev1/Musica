@@ -524,11 +524,10 @@ abstract class DatabaseInitializer protected constructor() : RoomDatabase() {
     companion object {
         lateinit var Instance: DatabaseInitializer
 
-        context(Context)
-        operator fun invoke() {
+        operator fun invoke(context: Context) {
             if (!::Instance.isInitialized) {
                 Instance = Room
-                    .databaseBuilder(this@Context, DatabaseInitializer::class.java, "data.db")
+                    .databaseBuilder(context.applicationContext, DatabaseInitializer::class.java, "data.db")
                     .addMigrations(
                         From8To9Migration(),
                         From10To11Migration(),

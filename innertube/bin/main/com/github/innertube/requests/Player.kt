@@ -56,18 +56,22 @@ suspend fun Innertube.player(videoId: String) = runCatchingNonCancellable {
             return@runCatchingNonCancellable response
         }
 
-        val audioStreams = client.get("https://pipedapi.adminforge.de/streams/$videoId") {
-            contentType(ContentType.Application.Json)
-        }.body<PipedResponse>().audioStreams
+        try {
+            val audioStreams = client.get("https://pipedapi.adminforge.de/streams/$videoId") {
+                contentType(ContentType.Application.Json)
+            }.body<PipedResponse>().audioStreams
 
-        safePlayerResponse.copy(
-            streamingData = safePlayerResponse.streamingData?.copy(
-                adaptiveFormats = safePlayerResponse.streamingData.adaptiveFormats?.map { adaptiveFormat ->
-                    adaptiveFormat.copy(
-                        url = audioStreams.find { it.bitrate == adaptiveFormat.bitrate }?.url
-                    )
-                }
+            safePlayerResponse.copy(
+                streamingData = safePlayerResponse.streamingData?.copy(
+                    adaptiveFormats = safePlayerResponse.streamingData.adaptiveFormats?.map { adaptiveFormat ->
+                        adaptiveFormat.copy(
+                            url = audioStreams.find { it.bitrate == adaptiveFormat.bitrate }?.url
+                        )
+                    }
+                )
             )
-        )
+        } catch (_: Exception) {
+            safePlayerResponse
+        }
     }
 }

@@ -24,7 +24,7 @@ class MainApplication : Application(), SingletonImageLoader.Factory {
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
-        DatabaseInitializer()
+        DatabaseInitializer(this)
 
         GlobalScope.launch {
             if (Innertube.visitorData.isNullOrBlank()) Innertube.visitorData =

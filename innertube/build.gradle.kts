@@ -12,4 +12,9 @@ dependencies {
     implementation(libs.ktor.client.serialization)
     implementation(libs.ktor.serialization.json)
 }
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
+

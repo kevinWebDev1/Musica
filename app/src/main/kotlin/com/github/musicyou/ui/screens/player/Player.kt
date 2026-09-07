@@ -1,5 +1,6 @@
 package com.github.musicyou.ui.screens.player
 
+
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -49,21 +50,28 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.PlaylistPlay
+import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.AvTimer
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Audiotrack
-import androidx.compose.material.icons.outlined.Share
-import kotlinx.coroutines.flow.firstOrNull
-import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Headset
-import androidx.compose.material.icons.outlined.PlayCircle
-import com.github.musicyou.ui.styling.neumorphicRaised
-import com.github.musicyou.ui.styling.neumorphicPressed
+import androidx.compose.material.icons.outlined.Speed
+import kotlinx.coroutines.flow.firstOrNull
+import androidx.media3.ui.AspectRatioFrameLayout
+import com.github.musicyou.utils.rememberPreference
+import com.github.musicyou.utils.videoResizeModeKey
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -118,6 +126,8 @@ import com.github.musicyou.R
 import com.github.musicyou.models.LocalMenuState
 import com.github.musicyou.ui.components.BaseMediaItemMenu
 import com.github.musicyou.ui.components.TooltipIconButton
+import com.github.musicyou.ui.styling.neumorphicPressed
+import com.github.musicyou.ui.styling.neumorphicRaised
 import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.isLandscape
@@ -129,11 +139,13 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.media3.common.util.UnstableApi
 import com.github.musicyou.sync.protocol.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(
     ExperimentalAnimationApi::class,
     ExperimentalMaterial3Api::class,
@@ -169,6 +181,7 @@ fun Player(
         if (binder.player.hasNextMediaItem()) binder.player.getMediaItemAt(binder.player.nextMediaItemIndex).mediaMetadata.title.toString()
         else stringResource(id = R.string.open_queue)
 
+    var videoResizeMode by rememberPreference(videoResizeModeKey, AspectRatioFrameLayout.RESIZE_MODE_FIT)
     var artistId: String? by remember(mediaItem) {
         mutableStateOf(
             mediaItem.mediaMetadata.extras?.getStringArrayList("artistIds")?.let { artists ->
@@ -214,7 +227,6 @@ fun Player(
     var baselineSpeed by rememberSaveable { mutableStateOf(1f) }
     var activeSpeed by rememberSaveable { mutableStateOf(1f) }
     var isSpeedGestureActive by remember { mutableStateOf(false) }
-    var videoResizeMode by rememberSaveable { mutableStateOf(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
     LaunchedEffect(areControlsVisible, isFullScreen) {
         if (areControlsVisible && isFullScreen) {
@@ -533,12 +545,10 @@ fun Player(
         val isYouTube = remember(mediaItem) {
             mediaItem.mediaId.startsWith("youtube-embed:")
         }
-        val isLocalItem = remember(mediaItem) {
-            mediaItem.mediaId.startsWith("content://") || mediaItem.mediaId.startsWith("file://") || mediaItem.mediaId.startsWith("/")
-        }
-        val isVideo = remember(mediaItem, syncSessionState.localMatchUri) {
+        val isVideo = remember(mediaItem, syncSessionState.localMatchUri, mediaItem.mediaMetadata.extras?.getBoolean("forceVideo"), isYouTube) {
             val path = syncSessionState.localMatchUri ?: mediaItem.mediaId
-            val isVid = path.endsWith(".mp4", ignoreCase = true) ||
+            val isVid = isYouTube || 
+                    path.endsWith(".mp4", ignoreCase = true) ||
                     path.endsWith(".mkv", ignoreCase = true) ||
                     path.endsWith(".mov", ignoreCase = true) ||
                     path.contains("video", ignoreCase = true) ||
@@ -548,12 +558,15 @@ fun Player(
             isVid
         }
 
+        val isLocalItem = remember(mediaItem) {
+            mediaItem.mediaId.startsWith("content://") || mediaItem.mediaId.startsWith("file://") || mediaItem.mediaId.startsWith("/")
+        }
         var isDownloaded by remember(mediaItem.mediaId) { mutableStateOf(false) }
         LaunchedEffect(mediaItem.mediaId) {
-            withContext(Dispatchers.IO) {
+            withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     if (!isLocalItem) {
-                        val format = Database.format(mediaItem.mediaId).firstOrNull() as? com.github.musicyou.models.Format
+                        val format = com.github.musicyou.Database.format(mediaItem.mediaId).firstOrNull() as? com.github.musicyou.models.Format
                         val contentLength = format?.contentLength
                         if (contentLength != null) {
                             isDownloaded = binder.cache.isCached(mediaItem.mediaId, 0L, contentLength)
@@ -566,39 +579,109 @@ fun Player(
         Column(
             modifier = Modifier
                 .fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp) // Reduced from 16.dp for tighter spacing
         ) {
-            // --- Header ---
             if (!isFullScreen) {
-                Box(
+                // Top Header Component
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 0.dp)
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { _, dragAmount ->
+                                    if (dragAmount > 20f) onPop()
+                                }
+                            )
+                        },
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Down Arrow (Back)
                     IconButton(
                         onClick = onPop,
                         modifier = Modifier
-                            .align(Alignment.CenterStart)
                             .neumorphicPressed(cornerRadius = 24.dp)
+                            .background(neumorphicColors.background, shape = CircleShape)
+                            .size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
                             contentDescription = "Dismiss",
                             tint = neumorphicColors.onBackground,
-                            modifier = Modifier.size(24.dp)
                         )
                     }
 
-                    if (!isLocalItem) {
-                        SongVideoToggle(
-                            isVideoMode = isVideo,
-                            onToggle = { forceVideo ->
-                                if (forceVideo != isVideo) {
-                                    binder.toggleForceVideo(forceVideo)
-                                }
-                            },
-                            modifier = Modifier.align(Alignment.Center)
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Audio / Video Pill Toggle
+                    if (syncSessionState.localMatchUri == null) {
+                        Row(
+                            modifier = Modifier
+                                .neumorphicPressed(cornerRadius = 24.dp)
+                                .background(neumorphicColors.background, shape = RoundedCornerShape(24.dp))
+                                .padding(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .clickable { binder?.toggleForceVideo(false) }
+                                    .background(if (!isVideo) neumorphicColors.onBackground.copy(alpha = 0.2f) else androidx.compose.ui.graphics.Color.Transparent)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Audiotrack,
+                                    contentDescription = "Audio",
+                                    tint = if (!isVideo) neumorphicColors.onBackground else neumorphicColors.onBackground.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .clickable { binder?.toggleForceVideo(true) }
+                                    .background(if (isVideo) neumorphicColors.onBackground.copy(alpha = 0.2f) else androidx.compose.ui.graphics.Color.Transparent)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Video",
+                                    tint = if (isVideo) neumorphicColors.onBackground else neumorphicColors.onBackground.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Right Icons (Menu)
+                    IconButton(
+                        onClick = {
+                            menuState.display {
+                                BaseMediaItemMenu(
+                                    onDismiss = menuState::hide,
+                                    mediaItem = mediaItem,
+                                    onStartRadio = {
+                                        binder.stopRadio()
+                                        binder.player.seamlessPlay(mediaItem)
+                                        binder.setupRadio(NavigationEndpoint.Endpoint.Watch(videoId = mediaItem.mediaId))
+                                    },
+                                    onGoToAlbum = onGoToAlbum,
+                                    onGoToArtist = onGoToArtist
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .neumorphicPressed(cornerRadius = 24.dp)
+                            .background(neumorphicColors.background, shape = CircleShape)
+                            .size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.MoreHoriz,
+                            contentDescription = "More",
+                            tint = neumorphicColors.onBackground
                         )
                     }
                 }
@@ -619,7 +702,7 @@ fun Player(
                                 .weight(if (isFullScreen) 1f else 0.66f)
                                 .padding(bottom = if (isFullScreen) 0.dp else 16.dp)
                         ) {
-                            if (isYouTube && isVideo) {
+                            if (isYouTube) {
                                 Box(contentAlignment = Alignment.BottomEnd, modifier = Modifier.fillMaxSize()) {
                                     YouTubeGestureSurface(
                                         modifier = Modifier.fillMaxSize(),
@@ -644,27 +727,6 @@ fun Player(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
-                                                }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
                                             // Rotation Button
                                             IconButton(
                                                 onClick = { 
@@ -746,7 +808,26 @@ fun Player(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
 
                                             // Rotation Button
                                             IconButton(
@@ -771,6 +852,20 @@ fun Player(
                                                 )
                                             }
                                             
+                                            // Zoom/Fit Toggle
+                                            IconButton(
+                                                onClick = {
+                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                                },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Crop,
+                                                    contentDescription = "Toggle Zoom",
+                                                    tint = Color.White
+                                                )
+                                            }
+
                                             // Fullscreen Button
                                             IconButton(
                                                 onClick = { isFullScreen = true },
@@ -848,7 +943,7 @@ fun Player(
                                 else 1.25f
                             )
                         ) {
-                            if (isYouTube && isVideo) {
+                            if (isYouTube) {
                                 Box {
                                     YouTubeGestureSurface(
                                         modifier = if (isFullScreen) Modifier.fillMaxSize() else Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -876,27 +971,6 @@ fun Player(
                                                 .padding(bottom = 16.dp, end = 24.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
-                                                }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
                                             // Rotation Button
                                             IconButton(
                                                 onClick = { 
@@ -1013,7 +1087,26 @@ fun Player(
                                                 .padding(bottom = 16.dp, end = 24.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-
+                                            // Quality Toggle
+                                            IconButton(
+                                                onClick = { isShowingQualityDialog = true },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                val qualityText = when (videoQuality) {
+                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
+                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                                }
+                                                Text(
+                                                    text = qualityText,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
 
                                             // Rotation Button
                                             IconButton(
@@ -1067,6 +1160,20 @@ fun Player(
                                                 Icon(
                                                     imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
                                                     contentDescription = "Lock",
+                                                    tint = Color.White
+                                                )
+                                            }
+
+                                            // Zoom/Fit Toggle
+                                            IconButton(
+                                                onClick = {
+                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                                },
+                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Crop,
+                                                    contentDescription = "Toggle Zoom",
                                                     tint = Color.White
                                                 )
                                             }
@@ -1135,123 +1242,124 @@ fun Player(
                             com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
                             com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
                         },
-                        isYouTube = isYouTube,
                         videoResizeMode = videoResizeMode,
                         onToggleZoom = {
-                            videoResizeMode = if (videoResizeMode == androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT) androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                         }
                     )
                 }
             }
 
             if (!isFullScreen) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(BottomSheetDefaults.ExpandedShape)
-                        .clickable { isQueueOpen = true }
                         .background(neumorphicColors.background)
                         .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
-                        .padding(horizontal = 8.dp, vertical = 0.dp) // Thinner padding
-                        .pointerInput(Unit) {
-                            detectVerticalDragGestures(
-                                onVerticalDrag = { _, dragAmount ->
-                                    if (dragAmount < 0) isQueueOpen = true
-                                }
-                            )
-                        },
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Playlist / Queue
-                    IconButton(onClick = { isQueueOpen = true }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                            contentDescription = null
-                        )
-                    }
-
-                    // Sleep Timer
-                    TooltipIconButton(
-                        description = R.string.sleep_timer,
-                        onClick = { isShowingSleepTimerDialog = true },
-                        icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
-                    )
-
-                    // Listen Together (Group)
-                    TooltipIconButton(
-                       description = R.string.sync_session,
-                       onClick = { isShowingSyncSheet = true },
-                       icon = Icons.Outlined.Group,
-                       tint = if (syncSessionState.sessionId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-
-                    // Download Button
-                    val context = LocalContext.current
-                    IconButton(
-                        onClick = {
-                            if (!isDownloaded && !isLocalItem) {
-                                com.github.musicyou.utils.DownloadManager.downloadSong(
-                                    context = context,
-                                    mediaItem = mediaItem,
-                                    cacheDataSourceFactory = binder.createCacheDataSource() as androidx.media3.datasource.cache.CacheDataSource.Factory
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isQueueOpen = true }
+                            .padding(horizontal = 8.dp, vertical = 0.dp)
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onVerticalDrag = { _, dragAmount ->
+                                        if (dragAmount < 0) isQueueOpen = true
+                                    }
                                 )
-                            }
-                        }
+                            },
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
-                            contentDescription = "Download"
-                        )
-                    }
-
-                    // Persistent Speed Selector (Icon instead of Text)
-                    IconButton(onClick = { isShowingSpeedDialog = true }) {
-                        Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
-                    }
-
-                    // Menu
-                    IconButton(
-                        onClick = {
-                            menuState.display {
-                                BaseMediaItemMenu(
-                                    onDismiss = menuState::hide,
-                                    mediaItem = mediaItem,
-                                    onStartRadio = {
-                                        binder.stopRadio()
-                                        binder.player.seamlessPlay(mediaItem)
-                                        binder.setupRadio(NavigationEndpoint.Endpoint.Watch(videoId = mediaItem.mediaId))
-                                    },
-                                    onGoToAlbum = onGoToAlbum,
-                                    onGoToArtist = onGoToArtist
-                                )
-                            }
+                        // Playlist / Queue
+                        IconButton(onClick = { isQueueOpen = true }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                contentDescription = null
+                            )
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.MoreHoriz,
-                            contentDescription = null,
-                        )
-                    }
-                    
-                    // Smart Local Source Indicator (Dynamic)
-                    val hasLocalMatch = syncSessionState.localMatchUri != null
-                    if (hasLocalMatch) {
-                        val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
-                        val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
+
+                        // Sleep Timer
                         TooltipIconButton(
-                            description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
-                            onClick = { binder.sessionManager.forcePlayLocal() },
-                            icon = sourceIcon,
-                            tint = sourceColor
+                            description = R.string.sleep_timer,
+                            onClick = { isShowingSleepTimerDialog = true },
+                            icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                         )
+
+                        // Sync Session (Middle)
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                                        colors = listOf(
+                                            MaterialTheme.colorScheme.primary,
+                                            MaterialTheme.colorScheme.tertiary
+                                        )
+                                    )
+                                )
+                                .clickable { isShowingSyncSheet = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Group, 
+                                contentDescription = "Sync Session", 
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        // Download Button
+                        val context = LocalContext.current
+                        IconButton(
+                            onClick = {
+                                if (!isDownloaded && !isLocalItem) {
+                                    binder?.let { playerService ->
+                                        val dataSourceFactory = playerService.createCacheDataSource()
+                                        if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
+                                            com.github.musicyou.utils.DownloadManager.downloadSong(
+                                                context = context,
+                                                mediaItem = mediaItem ?: return@IconButton,
+                                                cacheDataSourceFactory = dataSourceFactory
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                                contentDescription = "Download"
+                            )
+                        }
+
+                        // Persistent Speed Selector (Icon instead of Text)
+                        IconButton(onClick = { isShowingSpeedDialog = true }) {
+                            Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+                        }
+
+
+                        
+                        // Smart Local Source Indicator (Dynamic)
+                        val hasLocalMatch = syncSessionState.localMatchUri != null
+                        if (hasLocalMatch) {
+                            val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
+                            val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
+                            TooltipIconButton(
+                                description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
+                                onClick = { binder.sessionManager.forcePlayLocal() },
+                                icon = sourceIcon,
+                                tint = sourceColor
+                            )
+                        }
                     }
                 }
             }
         }
-
-        // Floating close button was moved to the header Box
 
         if (isShowingSleepTimerDialog) {
             SleepTimer(
@@ -1443,7 +1551,11 @@ fun ReactionRow(onEmojiSelected: (String) -> Unit) {
 
 @Composable
 fun FlashMessageRow(onMessageSelected: (String) -> Unit) {
+    var showCustomMsgDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var customMsgText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+
     val messages = listOf(
+        "Custom Msg 💬",
         "I LOVE this track 😭🔥",
         "Favorite song!!",
         "Skip this one 🙅",
@@ -1462,24 +1574,75 @@ fun FlashMessageRow(onMessageSelected: (String) -> Unit) {
         items(messages.size) { index ->
             val msg = messages[index]
 
-            val bg = MaterialTheme.colorScheme.surfaceContainerHigh
-            val fg = MaterialTheme.colorScheme.onSurface
+            val isCustom = msg == "Custom Msg 💬"
+            val bg = if (isCustom) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+            val fg = if (isCustom) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
 
             Surface(
                 color = bg,
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.clickable { onMessageSelected(msg) }
+                modifier = Modifier.clickable { 
+                    if (isCustom) {
+                        showCustomMsgDialog = true
+                    } else {
+                        onMessageSelected(msg)
+                    }
+                }
             ) {
                 Text(
                     text = msg,
                     color = fg,
                     fontSize = 12.sp,
+                    fontWeight = if (isCustom) androidx.compose.ui.text.font.FontWeight.Bold else null,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                 )
             }
-
-
         }
+    }
+
+    if (showCustomMsgDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showCustomMsgDialog = false },
+            title = { Text("Custom Message") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = customMsgText,
+                    onValueChange = { customMsgText = it },
+                    label = { Text("Type your message...") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = {
+                            if (customMsgText.isNotBlank()) {
+                                onMessageSelected(customMsgText)
+                                showCustomMsgDialog = false
+                                customMsgText = ""
+                            }
+                        }
+                    )
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        if (customMsgText.isNotBlank()) {
+                            onMessageSelected(customMsgText)
+                            showCustomMsgDialog = false
+                            customMsgText = ""
+                        }
+                    }
+                ) {
+                    Text("Send")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showCustomMsgDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -1493,6 +1656,7 @@ fun Modifier.scale(scale: Float): Modifier = this.then(
     Modifier.size(scale.dp) // Dummy implementation to satisfy compiler if needed or use proper graphicsLayer
 )
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun FullscreenControls(
     areControlsVisible: Boolean,
@@ -1509,8 +1673,7 @@ fun FullscreenControls(
     videoQualityText: String,
     videoResizeMode: Int,
     onToggleZoom: () -> Unit,
-    modifier: Modifier = Modifier,
-    isYouTube: Boolean = true
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     
@@ -1575,18 +1738,16 @@ fun FullscreenControls(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Quality Toggle
-            if (isYouTube) {
-                IconButton(
-                    onClick = onShowQuality,
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                ) {
-                    Text(
-                        text = videoQualityText,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+            IconButton(
+                onClick = onShowQuality,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Text(
+                    text = videoQualityText,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             // Rotation
@@ -1607,6 +1768,18 @@ fun FullscreenControls(
                 Icon(
                     imageVector = Icons.Rounded.ScreenRotation,
                     contentDescription = "Rotate",
+                    tint = Color.White
+                )
+            }
+
+            // Zoom/Fit Toggle
+            IconButton(
+                onClick = onToggleZoom,
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            ) {
+                Icon(
+                    imageVector = if (videoResizeMode == androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM) Icons.Outlined.Fullscreen else Icons.Outlined.Crop,
+                    contentDescription = "Toggle Zoom",
                     tint = Color.White
                 )
             }
@@ -1832,49 +2005,6 @@ fun ManualMatchOverlay(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Select Local File")
             }
-        }
-    }
-}
-
-@Composable
-fun SongVideoToggle(
-    isVideoMode: Boolean,
-    onToggle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .neumorphicPressed(cornerRadius = 24.dp)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val songModifier = if (!isVideoMode) Modifier.neumorphicRaised(cornerRadius = 20.dp) else Modifier
-        val songColor = if (!isVideoMode) MaterialTheme.colorScheme.primary else Color.LightGray
-        
-        val videoModifier = if (isVideoMode) Modifier.neumorphicRaised(cornerRadius = 20.dp) else Modifier
-        val videoColor = if (isVideoMode) MaterialTheme.colorScheme.primary else Color.LightGray
-
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .then(songModifier)
-                .clickable { onToggle(false) }
-                .padding(horizontal = 24.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Outlined.Headset, contentDescription = "Song", tint = songColor)
-        }
-        
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .then(videoModifier)
-                .clickable { onToggle(true) }
-                .padding(horizontal = 24.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Outlined.PlayCircle, contentDescription = "Video", tint = videoColor)
         }
     }
 }

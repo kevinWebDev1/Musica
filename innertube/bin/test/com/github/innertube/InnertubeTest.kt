@@ -2,13 +2,12 @@ package com.github.innertube
 
 import com.github.innertube.requests.relatedPage
 import com.github.innertube.requests.trending
-import kotlinx.coroutines.runBlocking
-import org.junit.Test
-import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
 
 class InnertubeTest {
     @Test
-    fun testTrending() = runBlocking {
+    fun testTrending() = runTest {
         println("Testing Innertube.trending()...")
         val trendingResult = Innertube.trending()
         val songs = trendingResult?.getOrNull()
@@ -19,13 +18,13 @@ class InnertubeTest {
         
         songs?.forEach { item ->
             if (item is Innertube.SongItem) {
-                println("Song: ${item.title} - ${item.artists?.joinToString { it.name ?: "" }}")
+                println("Song: ${item.info?.name} - ${item.authors?.joinToString { it.name ?: "" }}")
             }
         }
     }
     
     @Test
-    fun testRelatedPage() = runBlocking {
+    fun testRelatedPage() = runTest {
         println("\nTesting Innertube.relatedPage('fJ9rUzIMcZQ')...")
         val relatedResult = Innertube.relatedPage("fJ9rUzIMcZQ")
         println("Related isSuccess: ${relatedResult?.isSuccess}")
@@ -39,4 +38,3 @@ class InnertubeTest {
         }
     }
 }
-

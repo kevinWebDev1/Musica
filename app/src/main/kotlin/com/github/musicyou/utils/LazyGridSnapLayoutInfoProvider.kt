@@ -26,9 +26,8 @@ fun Density.calculateDistanceToDesiredSnapPosition(
 private val LazyGridLayoutInfo.singleAxisViewportSize: Int
     get() = if (orientation == Orientation.Vertical) viewportSize.height else viewportSize.width
 
-context(Density)
 @ExperimentalFoundationApi
-fun SnapLayoutInfoProvider(
+fun Density.SnapLayoutInfoProvider(
     lazyGridState: LazyGridState,
     positionInLayout: Density.(layoutSize: Float, itemSize: Float) -> Float =
         { layoutSize, itemSize -> (layoutSize / 2f - itemSize / 2f) }

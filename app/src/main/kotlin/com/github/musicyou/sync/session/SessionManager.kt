@@ -71,9 +71,9 @@ class SessionManager(
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
     // SOCIAL: Flow for real-time interactions (reactions, ripples, messages)
-    // Replay 1 ensures late-joining UI collectors (like after a rotation or binder reconnect) don't miss the latest splash.
+    // Replay 0 ensures ephemeral events (like emojis) aren't re-fired on UI recomposition (e.g. when changing songs).
     private val _socialEvents = MutableSharedFlow<SyncEvent>(
-        replay = 1,
+        replay = 0,
         extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
@@ -699,9 +699,10 @@ class SessionManager(
                     // PHASE 2 UX FIX: Only validate heartbeat if we have connected peers
                     // This prevents host from auto-disconnecting while waiting for participants to join
                     val hasPeers = _sessionState.value.connectedPeers.isNotEmpty()
+                    val requiresValidation = !isHost || hasPeers
                     
-                    if (hasPeers) {
-                        // Have peers - validate pong responses (3-strike disconnect)
+                    if (requiresValidation) {
+                        // Have peers or participant - validate pong responses (3-strike disconnect)
                         val pongReceived = CompletableDeferred<Boolean>()
                         pendingPongs[pingId] = pongReceived
                         
@@ -1009,8 +1010,11 @@ class SessionManager(
                         )
                         val actualPos = playbackEngine.getCurrentPosition()
                         
+                        val isVideo = isVideoTrack(state.currentMediaId)
+                        val thresholdMs = if (isVideo) 3000L else DRIFT_THRESHOLD_MS
+                        
                         val drift = kotlin.math.abs(actualPos - expectedPos)
-                        if (drift > DRIFT_THRESHOLD_MS) {
+                        if (drift > thresholdMs) {
                             Log.w(TAG, "DRIFT MONITOR: Significant drift detected! actual=$actualPos, expected=$expectedPos, drift=${drift}ms. Resyncing...")
                             applyAuthoritativeSnapshot(state, "DriftMonitor")
                         } else {
@@ -1126,8 +1130,12 @@ class SessionManager(
         val state = playbackEngine.playbackState.value
         val now = timeSyncEngine.getGlobalTime()
         
+        // Use the authoritative session media ID, not the local engine's media ID
+        // (This prevents participants from sending local fingerprints to the Host)
+        val sessionMediaId = _sessionState.value.currentMediaId ?: return
+        
         val event = PlayEvent(
-            mediaId = state.mediaId ?: return,
+            mediaId = sessionMediaId,
             startPos = state.currentPositionMs,
             timestamp = now,  // Current time (not future) - participants sync to host's current position
             playbackSpeed = state.playbackSpeed,
@@ -1353,8 +1361,8 @@ class SessionManager(
      * 
      * @param reason The reason for the transition (Player.MEDIA_ITEM_TRANSITION_REASON_*)
      */
-    fun onTrackChanged(mediaId: String, reason: Int) {
-        Log.d(TAG, "onTrackChanged: mediaId=$mediaId, reason=$reason, isHost=$isHost, isApplyingSnapshot=$isApplyingSnapshot")
+    fun onTrackChanged(mediaId: String, reason: Int, startPos: Long = 0L) {
+        Log.d(TAG, "onTrackChanged: mediaId=$mediaId, reason=$reason, startPos=$startPos, isHost=$isHost, isApplyingSnapshot=$isApplyingSnapshot")
         
         // If triggered by applyAuthoritativeSnapshot, don't broadcast (prevents echo loop)
         if (isApplyingSnapshot) {
@@ -1401,7 +1409,7 @@ class SessionManager(
         
         val event = PlayEvent(
             mediaId = mediaId,
-            startPos = 0L,
+            startPos = startPos,
             timestamp = scheduledStartTime,
             playbackSpeed = playbackEngine.playbackState.value.playbackSpeed,
             title = metadata?.first,
@@ -1430,7 +1438,7 @@ class SessionManager(
                     currentMediaId = mediaId,
                     playbackStatus = SessionState.Status.PLAYING,
                     trackStartGlobalTime = scheduledStartTime,
-                    positionAtAnchor = 0L,
+                    positionAtAnchor = startPos,
                     title = metadata?.first,
                     artist = metadata?.second,
                     thumbnailUrl = metadata?.third
@@ -1438,6 +1446,7 @@ class SessionManager(
             }
             android.util.Log.d("ytSync", "SessionManager: HOST sending PlayEvent for mediaId=$mediaId at globalTime=$scheduledStartTime")
             Log.i(TAG, "onTrackChanged: HOST sending PlayEvent at globalTime=$scheduledStartTime for $mediaId")
+            lastSyncedTimestamp = System.currentTimeMillis()
             eventBroadcaster?.invoke(event)
             
             // 3. Wait and Play
@@ -2014,32 +2023,15 @@ class SessionManager(
         var syncMessage = state.clockSyncMessage
         
         // CRITICAL GUARD: Protect ALL clients (Host and Guest) from loading a peer's raw content:// URI.
-        val isPeerLocalUri = state.currentMediaId?.startsWith("content://") == true || state.currentMediaId?.startsWith("file://") == true
+        val isPeerLocalUri = !isHost && (state.currentMediaId?.startsWith("content://") == true || state.currentMediaId?.startsWith("file://") == true)
         
-        // Construct a MediaItem with metadata from the state so the Player UI doesn't crash/show white screen
-        var mediaItem: androidx.media3.common.MediaItem? = null
-        state.currentMediaId?.let { mediaId ->
-            val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
-            state.title?.let { metadataBuilder.setTitle(it) }
-            state.artist?.let { metadataBuilder.setArtist(it) }
-            state.thumbnailUrl?.let { metadataBuilder.setArtworkUri(android.net.Uri.parse(it)) }
-            
-            val mediaItemBuilder = androidx.media3.common.MediaItem.Builder()
-                .setMediaId(mediaId)
-                .setMediaMetadata(metadataBuilder.build())
-            
-            if (resolvedUri != null) {
-                mediaItemBuilder.setUri(resolvedUri)
-            }
-            mediaItem = mediaItemBuilder.build()
-        }
-
         // If the engine currently has no mediaItem (e.g. we rejoined the same session but engine state was lost/null), 
         // we must force a reload so the UI gets the metadata!
         val isMissingMetadata = state.currentMediaId != null && playbackEngine.playbackState.value.mediaItem == null
-        val isSameTrack = !isMissingMetadata && (currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId) && state.currentMediaId != null
+        val engineMediaId = playbackEngine.playbackState.value.mediaId
+        val isSameTrack = !isMissingMetadata && (currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId || engineMediaId == state.currentMediaId) && state.currentMediaId != null
 
-        if (!isSameTrack && isPeerLocalUri) {
+        if ((!isSameTrack || _sessionState.value.localMatchUri == null) && isPeerLocalUri) {
             if (state.mediaFingerprint == null) {
                 Log.w("MusicSyncFlow", "applySnapshot: ABORTING - received peer's local URI (${state.currentMediaId}) without fingerprint. Ignoring.")
                 return@withLock
@@ -2078,9 +2070,38 @@ class SessionManager(
         } else if (isSameTrack && isPeerLocalUri) {
             // Keep using the existing resolved URI if we are already on this track
             resolvedUri = _sessionState.value.localMatchUri
-        } else if (!isPeerLocalUri) {
+        } else if (!isPeerLocalUri && !isHost) {
             // Not a peer local URI, so clear any leftover local match
             _sessionState.update { it.copy(localMatchUri = null) }
+        }
+
+        // Construct a MediaItem with metadata from the state so the Player UI doesn't crash/show white screen
+        var mediaItem: androidx.media3.common.MediaItem? = null
+        state.currentMediaId?.let { mediaId ->
+            val metadataBuilder = androidx.media3.common.MediaMetadata.Builder()
+            state.title?.let { metadataBuilder.setTitle(it) }
+            state.artist?.let { metadataBuilder.setArtist(it) }
+            state.thumbnailUrl?.let { metadataBuilder.setArtworkUri(android.net.Uri.parse(it)) }
+            
+            val mediaItemBuilder = androidx.media3.common.MediaItem.Builder()
+                .setMediaId(mediaId)
+                .setMediaMetadata(metadataBuilder.build())
+            
+            val uriToSet = if (isPeerLocalUri) {
+                resolvedUri
+            } else {
+                resolvedUri ?: if (mediaId.startsWith("content://") || mediaId.startsWith("file://") || mediaId.startsWith("http://") || mediaId.startsWith("https://")) mediaId else null
+            }
+            if (uriToSet != null) {
+                mediaItemBuilder.setUri(uriToSet)
+            }
+            
+            // NEW: Set MIME type to ensure ExoPlayer can decode the format properly (especially for local videos)
+            state.mediaFingerprint?.mimeType?.let { mimeType ->
+                mediaItemBuilder.setMimeType(mimeType)
+            }
+            
+            mediaItem = mediaItemBuilder.build()
         }
         
         if (state.mediaFingerprint == null && _sessionState.value.localMatchUri != null) {
@@ -2095,8 +2116,8 @@ class SessionManager(
 
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
-            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
-            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
+            val isVideo = isVideoTrack(state.currentMediaId)
+            val thresholdMs = if (isVideo) 3000L else POSITION_DRIFT_THRESHOLD_MS
             val needsSeek = positionDrift > thresholdMs
             Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs)")
             
@@ -2109,13 +2130,9 @@ class SessionManager(
                                 anchorTime = state.trackStartGlobalTime,
                                 speed = effectiveSpeed
                             )
-                            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
-                            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
                             Log.d("MusicSyncFlow", "applySnapshot: SEEKING guest to $correctPos (Reason: Drift $positionDrift > $thresholdMs)")
                             playbackEngine.seekTo(correctPos)
                         } else {
-                            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
-                            val thresholdMs = if (isYouTube) 2000L else POSITION_DRIFT_THRESHOLD_MS
                             Log.d("MusicSyncFlow", "applySnapshot: Ignoring small drift (Drift $positionDrift < $thresholdMs). Keeping current pos.")
                         }
                         
@@ -2257,6 +2274,25 @@ class SessionManager(
             isPendingManualMatch = false // Clear pending flag once a file is selected
         )}
         forcePlayLocal()
+    }
+
+    /**
+     * Cancel a manual local file match.
+     */
+    fun cancelManualMatch() {
+        Log.i(TAG, "Manual file selection cancelled.")
+        _sessionState.update { it.copy(
+            isPendingManualMatch = false // Clear pending flag
+        )}
+    }
+
+    private fun isVideoTrack(mediaId: String?): Boolean {
+        if (mediaId == null) return false
+        return mediaId.startsWith("youtube-embed:") ||
+                mediaId.endsWith(".mp4", ignoreCase = true) ||
+                mediaId.endsWith(".mkv", ignoreCase = true) ||
+                mediaId.endsWith(".mov", ignoreCase = true) ||
+                mediaId.contains("video", ignoreCase = true)
     }
 
     private fun formatTime(ms: Long): String {

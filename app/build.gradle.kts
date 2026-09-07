@@ -26,8 +26,8 @@ android {
         applicationId = "com.github.musicyou"
         minSdk = 23
         targetSdk = 36
-        versionCode = 31
-        versionName = "3.1.0"
+        versionCode = 32
+        versionName = "4.0.0"
         resConfigs("en", "xxhdpi") 
     }
 
@@ -128,6 +128,13 @@ dependencies {
     implementation("com.google.firebase:firebase-functions-ktx")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0")
+    
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.client.encoding)
+    implementation(libs.ktor.client.serialization)
+    implementation(libs.ktor.serialization.json)
     
     coreLibraryDesugaring(libs.desugaring)
 }

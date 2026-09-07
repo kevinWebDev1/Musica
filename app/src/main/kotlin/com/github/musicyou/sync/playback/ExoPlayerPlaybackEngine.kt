@@ -158,8 +158,23 @@ class ExoPlayerPlaybackEngine(
 
     override fun loadMediaItem(mediaItem: MediaItem, seekPositionMs: Long, autoPlay: Boolean) {
         android.util.Log.d("MusicSyncFlow", "loadMediaItem: Loading ${mediaItem.mediaId}, seekTo=$seekPositionMs, autoPlay=$autoPlay")
+        val safeItem = if (mediaItem.localConfiguration == null) {
+            val uriString = mediaItem.mediaId
+            if (uriString.startsWith("content://") || uriString.startsWith("file://") || uriString.startsWith("http://") || uriString.startsWith("https://")) {
+                mediaItem.buildUpon()
+                    .setUri(android.net.Uri.parse(uriString))
+                    .setCustomCacheKey(uriString)
+                    .build()
+            } else {
+                loadTrack(mediaItem.mediaId, seekPositionMs, autoPlay, null)
+                return
+            }
+        } else {
+            mediaItem
+        }
+
         runOnMain {
-            player.setMediaItem(mediaItem)
+            player.setMediaItem(safeItem)
             player.prepare()
             if (seekPositionMs > 0) {
                 android.util.Log.d("MusicSyncFlow", "loadMediaItem: Seeking to $seekPositionMs ms")

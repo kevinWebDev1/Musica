@@ -73,6 +73,7 @@ import com.github.musicyou.utils.isShowingSynchronizedLyricsKey
 import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.utils.toast
 import com.github.musicyou.utils.verticalFadingEdge
+import com.github.musicyou.utils.LrcLib
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -117,8 +118,8 @@ fun Lyrics(
 
         LaunchedEffect(mediaId, isShowingSynchronizedLyrics) {
             withContext(Dispatchers.IO) {
-                Database.lyrics(mediaId).collect {
-                    if (isShowingSynchronizedLyrics && it?.synced == null) {
+                Database.lyrics(mediaId).collect { dbLyrics ->
+                    if (isShowingSynchronizedLyrics && dbLyrics?.synced == null) {
                         val mediaMetadata = mediaMetadataProvider()
                         var duration = withContext(Dispatchers.Main) {
                             durationProvider()
@@ -131,35 +132,47 @@ fun Lyrics(
                             }
                         }
 
-                        KuGou.lyrics(
+                        var syncedResult: String? = KuGou.lyrics(
                             artist = mediaMetadata.artist?.toString() ?: "",
                             title = mediaMetadata.title?.toString() ?: "",
                             duration = duration / 1000
-                        )?.onSuccess { syncedLyrics ->
+                        )?.getOrNull()?.value
+
+                        if (syncedResult.isNullOrBlank()) {
+                            syncedResult = LrcLib.lyrics(
+                                artist = mediaMetadata.artist?.toString() ?: "",
+                                title = mediaMetadata.title?.toString() ?: "",
+                                duration = duration / 1000
+                            )?.getOrNull()
+                        }
+
+                        if (!syncedResult.isNullOrBlank()) {
                             Database.upsert(
                                 Lyrics(
                                     songId = mediaId,
-                                    fixed = it?.fixed,
-                                    synced = syncedLyrics?.value ?: ""
+                                    fixed = dbLyrics?.fixed,
+                                    synced = syncedResult
                                 )
                             )
-                        }?.onFailure {
+                        } else {
                             isError = true
+                            lyrics = dbLyrics
                         }
-                    } else if (!isShowingSynchronizedLyrics && it?.fixed == null) {
+                    } else if (!isShowingSynchronizedLyrics && dbLyrics?.fixed == null) {
                         Innertube.lyrics(videoId = mediaId)?.onSuccess { fixedLyrics ->
                             Database.upsert(
                                 Lyrics(
                                     songId = mediaId,
                                     fixed = fixedLyrics ?: "",
-                                    synced = it?.synced
+                                    synced = dbLyrics?.synced
                                 )
                             )
                         }?.onFailure {
                             isError = true
+                            lyrics = dbLyrics
                         }
                     } else {
-                        lyrics = it
+                        lyrics = dbLyrics
                     }
                 }
             }

@@ -122,52 +122,19 @@ class MainActivity : ComponentActivity() {
         data = intent?.data ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
 
         setContent {
-            // Force Update Check - runs before showing any UI
-            var updateStatus by remember { mutableStateOf<UpdateStatus?>(null) }
-            var versionConfig by remember { mutableStateOf<VersionConfig?>(null) }
-            var showOptionalUpdateDialog by remember { mutableStateOf(false) }
-
+            // Check for updates using the Webstore API
+            var updateInfo by remember { mutableStateOf<com.github.musicyou.updater.UpdateInfo?>(null) }
+            
             LaunchedEffect(Unit) {
-                val updateManager = UpdateManager(this@MainActivity)
-                val (status, config) = updateManager.checkForUpdate()
-                updateStatus = status
-                versionConfig = config
-
-                // Auto-show optional/recommended dialogs (unless force update)
-                if (status == UpdateStatus.OPTIONAL || status == UpdateStatus.RECOMMENDED) {
-                    showOptionalUpdateDialog = true
-                }
+                val currentVersion = packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0"
+                val info = com.github.musicyou.updater.UpdateChecker.checkForUpdates(currentVersion)
+                updateInfo = info
             }
 
-            // FORCE UPDATE: Block app until user updates
-            if (updateStatus == UpdateStatus.FORCE_REQUIRED && versionConfig != null) {
-                ForceUpdateDialog(
-                    versionConfig = versionConfig!!,
-                    onUpdateClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(versionConfig!!.updateUrl))
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                        finishAffinity() // Close app after opening browser
-                    }
-                )
-                return@setContent // Don't show rest of app
-            }
-
-            // Optional/Recommended Update Dialog (dismissible)
-            if (showOptionalUpdateDialog && versionConfig != null &&
-                (updateStatus == UpdateStatus.OPTIONAL || updateStatus == UpdateStatus.RECOMMENDED)) {
-                OptionalUpdateDialog(
-                    versionConfig = versionConfig!!,
-                    isRecommended = updateStatus == UpdateStatus.RECOMMENDED,
-                    onUpdateClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(versionConfig!!.updateUrl))
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                        showOptionalUpdateDialog = false
-                    },
-                    onDismiss = {
-                        showOptionalUpdateDialog = false
-                    }
+            if (updateInfo?.isUpdateAvailable == true) {
+                com.github.musicyou.updater.UpdateDialog(
+                    updateInfo = updateInfo!!,
+                    onDismiss = { updateInfo = null }
                 )
             }
 
@@ -241,6 +208,13 @@ class MainActivity : ComponentActivity() {
                                             }
                                             override fun onStateChange(youTubePlayer: YouTubePlayer, state: PlayerConstants.PlayerState) {
                                                 android.util.Log.d("YouTubePlayerRetained", "onStateChange: $state")
+                                                
+                                                // If the engine's intent is PLAYING, but the player just paused (e.g. due to being detached by Compose), force it back to play!
+                                                if (state == PlayerConstants.PlayerState.PAUSED && engine.playbackState.value.isPlaying) {
+                                                    android.util.Log.w("YouTubePlayerRetained", "Player paused unexpectedly while engine intent is PLAYING. Forcing play()")
+                                                    youTubePlayer.play()
+                                                }
+                                                
                                                 val isPlaying = state == PlayerConstants.PlayerState.PLAYING
                                                 val pbState = when (state) {
                                                     PlayerConstants.PlayerState.PLAYING  -> SyncPlaybackState.STATE_READY
@@ -335,13 +309,15 @@ class MainActivity : ComponentActivity() {
                                         }
                                     })();
                                 """.trimIndent()
-                                webView.evaluateJavascript(js) {
+                                webView.evaluateJavascript(js) { result ->
+                                    android.util.Log.d("YouTubeQuality", "evaluateJavascript callback result: $result, isQualityChange: $isQualityChange")
                                     if (isQualityChange) {
                                         val videoId = currentMediaIdForQuality.removePrefix("youtube-embed:")
                                         val isPlaying = binder?.youtubeEngine?.playbackState?.value?.isPlaying == true
                                         val currentPosSec = (binder?.youtubeEngine?.playbackState?.value?.currentPositionMs ?: 0L) / 1000f
                                         
                                         android.util.Log.d("YouTubeQuality", "Forcing video reload for quality change: $videoId at $currentPosSec")
+                                        binder?.youtubeEngine?.reportStateChange(isPlaying, SyncPlaybackState.STATE_BUFFERING)
                                         if (isPlaying) {
                                             ytPlayerRef.value?.loadVideo(videoId, currentPosSec)
                                         } else {
@@ -385,6 +361,11 @@ class MainActivity : ComponentActivity() {
                                         lastSeekRequestId = state.seekRequestId
                                         android.util.Log.d("YouTubePlayerRetained", "SEEK videoId=$videoId, toMs=${state.currentPositionMs}")
                                         ytPlayer.seekTo(state.currentPositionMs / 1000f)
+                                        
+                                        // Force playback if the intent is playing, in case the player stalled during a seek
+                                        if (state.isPlaying) {
+                                            ytPlayer.play()
+                                        }
                                     }
                                     if (state.isPlaying != lastIsPlaying) {
                                         lastIsPlaying = state.isPlaying

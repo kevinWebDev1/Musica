@@ -1,13 +1,12 @@
 package com.github.innertube
 
 import com.github.innertube.requests.trending
-import com.github.innertube.requests.relatedPage
-import kotlinx.coroutines.runBlocking
-import org.junit.Test
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
 
 class TestArtist {
     @Test
-    fun testTrending() = runBlocking {
+    fun testTrending() = runTest {
         println("Fetching Trending...")
         val trendingResult = Innertube.trending()
         println("Trending isSuccess: ${trendingResult?.isSuccess}, size: ${trendingResult?.getOrNull()?.size}")
@@ -17,7 +16,7 @@ class TestArtist {
     }
 
     @Test
-    fun testSearchSongs() = runBlocking {
+    fun testSearchSongs() = runTest {
         println("Fetching SearchSongs('Top Songs')...")
         val searchResult = com.github.innertube.requests.searchSongs("Top Songs")
         println("SearchSongs isSuccess: ${searchResult?.isSuccess}, size: ${searchResult?.getOrNull()?.items?.size}")

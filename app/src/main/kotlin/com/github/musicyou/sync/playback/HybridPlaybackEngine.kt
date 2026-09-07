@@ -29,11 +29,16 @@ class HybridPlaybackEngine(
             
             exoPlayerEngine.playbackState.collect { state ->
                 // Auto-switch to exoPlayer ONLY on explicit state transitions (prevents stealing focus due to stale async state)
-                val isNewTrack = lastMediaId != null && state.mediaItem != null && state.mediaItem.mediaId != lastMediaId
+                val incomingMediaId = state.mediaItem?.mediaId
+                val isNewTrack = incomingMediaId != null && incomingMediaId != lastMediaId
                 val startedPlaying = !lastIsPlaying && state.isPlaying
                 val startedBuffering = lastPlaybackState != PlaybackState.STATE_BUFFERING && state.playbackState == PlaybackState.STATE_BUFFERING
                 
-                if (activeEngine != exoPlayerEngine && (startedPlaying || startedBuffering || isNewTrack)) {
+                // We only want to block ExoPlayer from stealing focus if the incoming track is somehow a YouTube embed (which shouldn't happen for ExoPlayer).
+                // We DO want ExoPlayer to steal focus if the user started playing a new local/remote track.
+                val isIncomingYoutubeEmbed = incomingMediaId?.startsWith("youtube-embed:") == true
+                
+                if (!isIncomingYoutubeEmbed && activeEngine != exoPlayerEngine && (startedPlaying || startedBuffering || isNewTrack)) {
                     android.util.Log.d("HybridPlaybackEngine", "Auto-switching active engine to ExoPlayer (startedPlaying=$startedPlaying, startedBuffering=$startedBuffering, isNewTrack=$isNewTrack)")
                     activeEngine.pause()
                     activeEngine = exoPlayerEngine

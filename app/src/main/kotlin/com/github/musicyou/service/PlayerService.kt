@@ -1002,10 +1002,10 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     override fun notification(): Notification? {
         if (player.currentMediaItem == null) return null
 
-        val playIntent = Action.play.pendingIntent
-        val pauseIntent = Action.pause.pendingIntent
-        val nextIntent = Action.next.pendingIntent
-        val prevIntent = Action.previous.pendingIntent
+        val playIntent = Action.play.pendingIntent(applicationContext)
+        val pauseIntent = Action.pause.pendingIntent(applicationContext)
+        val nextIntent = Action.next.pendingIntent(applicationContext)
+        val prevIntent = Action.previous.pendingIntent(applicationContext)
 
         val mediaMetadata = player.mediaMetadata
 
@@ -1100,9 +1100,19 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         val chunkLength = 512 * 1024L
 
         return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
-            val videoId = dataSpec.key ?: error("A key must be set")
+            val uriString = dataSpec.uri.toString()
+            val videoId = dataSpec.key ?: ""
 
-            if (videoId.startsWith("content://") || videoId.startsWith("file://")) { // Local file
+            android.util.Log.d("ResolvingDataSource", "Resolving stream - videoId: $videoId, uri: $uriString")
+
+            if (videoId.startsWith("content://") || videoId.startsWith("file://") ||
+                uriString.startsWith("content://") || uriString.startsWith("file://")) { // Local file
+                android.util.Log.d("ResolvingDataSource", "Detected local file, bypassing Innertube and enabling video decoder.")
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) {
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                        .build()
+                }
                 return@Factory dataSpec
             }
 
@@ -1472,7 +1482,18 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 val currentPosition = hybridPlaybackEngine.getCurrentPosition()
                 
                 android.util.Log.d("AudioVideoToggle", "[TOGGLE] Switching engines via HybridPlaybackEngine. newMediaId=$newMediaId, positionMs=$currentPosition, isPlaying=$isPlaying")
-                hybridPlaybackEngine.loadMediaItem(newItem, currentPosition, isPlaying)
+                
+                val uri = currentItem.localConfiguration?.uri
+                if (uri != null || newMediaId.startsWith("youtube-embed:")) {
+                    hybridPlaybackEngine.loadMediaItem(newItem, currentPosition, isPlaying)
+                } else {
+                    android.util.Log.d("AudioVideoToggle", "[TOGGLE] Missing URI for audio track. Resolving via loadTrack.")
+                    hybridPlaybackEngine.loadTrack(newMediaId, currentPosition, isPlaying, null)
+                }
+                
+                if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                    sessionManager.onTrackChanged(newMediaId, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED, currentPosition)
+                }
             }
         }
 
@@ -1744,14 +1765,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
     @JvmInline
     private value class Action(val value: String) {
-        context(Context)
-        val pendingIntent: PendingIntent
-            get() = PendingIntent.getBroadcast(
-                this@Context,
-                requestCode,
-                Intent(value).setPackage(packageName),
-                PendingIntent.FLAG_UPDATE_CURRENT.or(if (isAtLeastAndroid6) PendingIntent.FLAG_IMMUTABLE else 0)
-            )
+        fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            Intent(value).setPackage(context.packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT.or(if (isAtLeastAndroid6) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
 
         private val requestCode: Int
             get() = when (this.value) {
