@@ -498,7 +498,8 @@ fun Player(
                 onGoToArtist = artistId?.let {
                     { onGoToArtist(it) }
                 },
-                isLocked = isParticipantLocked
+                isLocked = isParticipantLocked,
+                modifier = Modifier.weight(1f)
             )
 
             // SOCIAL: Interaction Triggers (Always visible in Sync Session, even if Locked)
@@ -915,9 +916,7 @@ fun Player(
                                 }
                             } else {
                                 thumbnailContent(
-                                    Modifier
-                                        .padding(horizontal = 16.dp)
-                                        .fillMaxSize()
+                                    Modifier.padding(horizontal = 16.dp)
                                 )
                             }
                         }
@@ -934,9 +933,7 @@ fun Player(
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets.statusBars)
+                        modifier = Modifier.windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets.statusBars)
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -1198,9 +1195,7 @@ fun Player(
                                 }
                             } else {
                                 thumbnailContent(
-                                    Modifier
-                                        .padding(horizontal = 32.dp, vertical = 8.dp)
-                                        .fillMaxSize()
+                                    Modifier.padding(horizontal = 32.dp, vertical = 8.dp)
                                 )
                             }
                         }
@@ -1210,6 +1205,7 @@ fun Player(
                                 Modifier
                                     .padding(vertical = 8.dp)
                                     .fillMaxWidth()
+                                    .weight(1f)
                             )
                         }
                     }
@@ -1273,29 +1269,36 @@ fun Player(
                                         if (dragAmount < 0) isQueueOpen = true
                                     }
                                 )
-                            }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 1. Playlist / Queue
-                            IconButton(onClick = { isQueueOpen = true }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                    contentDescription = null
+                            // LEFT ITEMS
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Playlist / Queue
+                                IconButton(onClick = { isQueueOpen = true }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                        contentDescription = null
+                                    )
+                                }
+        
+                                // Sleep Timer
+                                TooltipIconButton(
+                                    description = R.string.sleep_timer,
+                                    onClick = { isShowingSleepTimerDialog = true },
+                                    icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                                 )
                             }
-
-                            // 2. Sleep Timer
-                            TooltipIconButton(
-                                description = R.string.sleep_timer,
-                                onClick = { isShowingSleepTimerDialog = true },
-                                icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
-                            )
-
-                            // 3. Sync Session (Middle)
+    
+                            // Sync Session (Middle)
                             Box(
                                 modifier = Modifier
                                     .size(56.dp)
@@ -1312,45 +1315,52 @@ fun Player(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Group,
-                                    contentDescription = "Sync Session",
+                                    imageVector = Icons.Outlined.Group, 
+                                    contentDescription = "Sync Session", 
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(28.dp)
                                 )
                             }
-
-                            // 4. Download Button
-                            val context = LocalContext.current
-                            IconButton(
-                                onClick = {
-                                    if (!isDownloaded && !isLocalItem) {
-                                        binder?.let { playerService ->
-                                            val dataSourceFactory = playerService.createCacheDataSource()
-                                            if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
-                                                com.github.musicyou.utils.DownloadManager.downloadSong(
-                                                    context = context,
-                                                    mediaItem = mediaItem ?: return@IconButton,
-                                                    cacheDataSourceFactory = dataSourceFactory
-                                                )
+    
+                            // RIGHT ITEMS
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Download Button
+                                val context = LocalContext.current
+                                IconButton(
+                                    onClick = {
+                                        if (!isDownloaded && !isLocalItem) {
+                                            binder?.let { playerService ->
+                                                val dataSourceFactory = playerService.createCacheDataSource()
+                                                if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
+                                                    com.github.musicyou.utils.DownloadManager.downloadSong(
+                                                        context = context,
+                                                        mediaItem = mediaItem ?: return@IconButton,
+                                                        cacheDataSourceFactory = dataSourceFactory
+                                                    )
+                                                }
                                             }
                                         }
                                     }
+                                ) {
+                                    Icon(
+                                        imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                                        contentDescription = "Download"
+                                    )
                                 }
-                            ) {
-                                Icon(
-                                    imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
-                                    contentDescription = "Download"
-                                )
-                            }
-
-                            // 5. Persistent Speed Selector
-                            Box(contentAlignment = Alignment.Center) {
-                                IconButton(onClick = { isShowingSpeedDialog = true }) {
-                                    Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+        
+                                // Persistent Speed Selector
+                                Box(contentAlignment = Alignment.Center) {
+                                    IconButton(onClick = { isShowingSpeedDialog = true }) {
+                                        Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+                                    }
                                 }
                             }
                         }
-                        
+
                         // Smart Local Source Indicator (Dynamic Overlay - doesn't disrupt spacing)
                         val hasLocalMatch = syncSessionState.localMatchUri != null
                         if (hasLocalMatch) {
