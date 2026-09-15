@@ -915,7 +915,9 @@ fun Player(
                                 }
                             } else {
                                 thumbnailContent(
-                                    Modifier.padding(horizontal = 16.dp)
+                                    Modifier
+                                        .padding(horizontal = 16.dp)
+                                        .fillMaxSize()
                                 )
                             }
                         }
@@ -932,7 +934,9 @@ fun Player(
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets.statusBars)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets.statusBars)
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -1194,7 +1198,9 @@ fun Player(
                                 }
                             } else {
                                 thumbnailContent(
-                                    Modifier.padding(horizontal = 32.dp, vertical = 8.dp)
+                                    Modifier
+                                        .padding(horizontal = 32.dp, vertical = 8.dp)
+                                        .fillMaxSize()
                                 )
                             }
                         }
@@ -1256,7 +1262,7 @@ fun Player(
                         .background(neumorphicColors.background)
                         .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
                 ) {
-                    Row(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { isQueueOpen = true }
@@ -1267,105 +1273,98 @@ fun Player(
                                         if (dragAmount < 0) isQueueOpen = true
                                     }
                                 )
-                            },
-                        verticalAlignment = Alignment.CenterVertically
+                            }
                     ) {
-                        // LEFT ITEMS
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Playlist / Queue
+                            // 1. Playlist / Queue
                             IconButton(onClick = { isQueueOpen = true }) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
                                     contentDescription = null
                                 )
                             }
-    
-                            // Sleep Timer
+
+                            // 2. Sleep Timer
                             TooltipIconButton(
                                 description = R.string.sleep_timer,
                                 onClick = { isShowingSleepTimerDialog = true },
                                 icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                             )
-                        }
 
-                        // Sync Session (Middle)
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                                        colors = listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.colorScheme.tertiary
+                            // 3. Sync Session (Middle)
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                                            colors = listOf(
+                                                MaterialTheme.colorScheme.primary,
+                                                MaterialTheme.colorScheme.tertiary
+                                            )
                                         )
                                     )
+                                    .clickable { isShowingSyncSheet = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Group,
+                                    contentDescription = "Sync Session",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(28.dp)
                                 )
-                                .clickable { isShowingSyncSheet = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Group, 
-                                contentDescription = "Sync Session", 
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
+                            }
 
-                        // RIGHT ITEMS
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Download Button
+                            // 4. Download Button
                             val context = LocalContext.current
-                        IconButton(
-                            onClick = {
-                                if (!isDownloaded && !isLocalItem) {
-                                    binder?.let { playerService ->
-                                        val dataSourceFactory = playerService.createCacheDataSource()
-                                        if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
-                                            com.github.musicyou.utils.DownloadManager.downloadSong(
-                                                context = context,
-                                                mediaItem = mediaItem ?: return@IconButton,
-                                                cacheDataSourceFactory = dataSourceFactory
-                                            )
+                            IconButton(
+                                onClick = {
+                                    if (!isDownloaded && !isLocalItem) {
+                                        binder?.let { playerService ->
+                                            val dataSourceFactory = playerService.createCacheDataSource()
+                                            if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
+                                                com.github.musicyou.utils.DownloadManager.downloadSong(
+                                                    context = context,
+                                                    mediaItem = mediaItem ?: return@IconButton,
+                                                    cacheDataSourceFactory = dataSourceFactory
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                            ) {
+                                Icon(
+                                    imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                                    contentDescription = "Download"
+                                )
                             }
-                        ) {
-                            Icon(
-                                imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
-                                contentDescription = "Download"
-                            )
+
+                            // 5. Persistent Speed Selector
+                            Box(contentAlignment = Alignment.Center) {
+                                IconButton(onClick = { isShowingSpeedDialog = true }) {
+                                    Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+                                }
+                            }
                         }
-
-                        // Persistent Speed Selector (Icon instead of Text)
-                        IconButton(onClick = { isShowingSpeedDialog = true }) {
-                            Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
-                        }
-
-
                         
-                        // Smart Local Source Indicator (Dynamic)
+                        // Smart Local Source Indicator (Dynamic Overlay - doesn't disrupt spacing)
                         val hasLocalMatch = syncSessionState.localMatchUri != null
                         if (hasLocalMatch) {
-                            val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
-                            val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
-                            TooltipIconButton(
-                                description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
-                                onClick = { binder.sessionManager.forcePlayLocal() },
-                                icon = sourceIcon,
-                                tint = sourceColor
-                            )
-                        }
+                            Box(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)) {
+                                val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
+                                val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
+                                TooltipIconButton(
+                                    description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
+                                    onClick = { binder.sessionManager.forcePlayLocal() },
+                                    icon = sourceIcon,
+                                    tint = sourceColor
+                                )
+                            }
                         }
                     }
                 }
