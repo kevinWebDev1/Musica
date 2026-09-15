@@ -129,7 +129,7 @@ fun Controls(
         )
 
         if (duration != C.TIME_UNSET) {
-            Spacer(modifier = Modifier.weight(0.2f)) // Reduced from 0.5f to avoid pushing buttons down
+            Spacer(modifier = Modifier.height(16.dp)) 
         }
 
         // Using enhanced Neumorphic SeekBar (Minimalist Track Look)
@@ -190,7 +190,7 @@ fun Controls(
             }
         }
 
-        Spacer(modifier = Modifier.weight(0.5f)) // Reduced from 1f
+        Spacer(modifier = Modifier.height(32.dp))
 
         // Neumorphic control buttons
         Row(

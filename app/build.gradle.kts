@@ -26,8 +26,8 @@ android {
         applicationId = "com.github.musicyou"
         minSdk = 23
         targetSdk = 36
-        versionCode = 32
-        versionName = "4.0.0"
+        versionCode = 33
+        versionName = "4.0.1"
         resConfigs("en", "xxhdpi") 
     }
 

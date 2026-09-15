@@ -498,8 +498,7 @@ fun Player(
                 onGoToArtist = artistId?.let {
                     { onGoToArtist(it) }
                 },
-                isLocked = isParticipantLocked,
-                modifier = Modifier.weight(1f)
+                isLocked = isParticipantLocked
             )
 
             // SOCIAL: Interaction Triggers (Always visible in Sync Session, even if Locked)
@@ -1205,7 +1204,6 @@ fun Player(
                                 Modifier
                                     .padding(vertical = 8.dp)
                                     .fillMaxWidth()
-                                    .weight(1f)
                             )
                         }
                     }
@@ -1270,23 +1268,29 @@ fun Player(
                                     }
                                 )
                             },
-                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Playlist / Queue
-                        IconButton(onClick = { isQueueOpen = true }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                contentDescription = null
+                        // LEFT ITEMS
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Playlist / Queue
+                            IconButton(onClick = { isQueueOpen = true }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    contentDescription = null
+                                )
+                            }
+    
+                            // Sleep Timer
+                            TooltipIconButton(
+                                description = R.string.sleep_timer,
+                                onClick = { isShowingSleepTimerDialog = true },
+                                icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                             )
                         }
-
-                        // Sleep Timer
-                        TooltipIconButton(
-                            description = R.string.sleep_timer,
-                            onClick = { isShowingSleepTimerDialog = true },
-                            icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
-                        )
 
                         // Sync Session (Middle)
                         Box(
@@ -1312,8 +1316,14 @@ fun Player(
                             )
                         }
 
-                        // Download Button
-                        val context = LocalContext.current
+                        // RIGHT ITEMS
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Download Button
+                            val context = LocalContext.current
                         IconButton(
                             onClick = {
                                 if (!isDownloaded && !isLocalItem) {
@@ -1355,6 +1365,7 @@ fun Player(
                                 icon = sourceIcon,
                                 tint = sourceColor
                             )
+                        }
                         }
                     }
                 }
