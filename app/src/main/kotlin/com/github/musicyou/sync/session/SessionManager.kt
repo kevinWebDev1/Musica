@@ -49,7 +49,7 @@ class SessionManager(
         private const val SYNC_ECHO_SUPPRESS_MS = 3000L 
         private const val SYNC_LEAD_TIME_MS = 0L       // 4s lead for snapshot scheduling
         private const val PARTICIPANT_LEAD_TIME_MS = 400L // 400ms participant lead vs host (Balance between sync tightness and lag buffer)
-        private const val DRIFT_THRESHOLD_MS = 1500L      // 1500ms drift threshold for snap-to-sync (absorbs network buffer latency to prevent sync death loops)
+        private const val DRIFT_THRESHOLD_MS = 300L      // 300ms drift threshold for snap-to-sync
         private const val DRIFT_CHECK_INTERVAL_MS = 2000L // 2s check interval for responsive drift detection
         private const val DEBOUNCE_MS = 300L
         
@@ -58,7 +58,7 @@ class SessionManager(
         
         // FIX 3: Event deduplication thresholds
         private const val DEDUP_THRESHOLD_MS = 200L
-        private const val POSITION_DRIFT_THRESHOLD_MS = 1500L
+        private const val POSITION_DRIFT_THRESHOLD_MS = 300L
         
         // FIX 5: Host-side coalescing window
         private const val COALESCE_WINDOW_MS = 200L
@@ -1033,15 +1033,15 @@ class SessionManager(
                         val currentMediaId = playbackEngine.playbackState.value.mediaId
                         
                         val hasOverride = state.localOverride != null
+                        val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
                         val isDeliberateOverride = hasOverride && state.localOverride.isDeliberateMismatch
                         
-                        // FIX: Sync Death Loop Protection. If we just seeked, the player needs time to buffer.
-                        // We relax the threshold to 3000ms for 5 seconds after a seek to let it stabilize, then tighten back to 300ms.
+                        // FIX: Sync Death Loop Protection ONLY for YouTube and deliberate overrides
                         val timeSinceLastSeek = System.currentTimeMillis() - lastSeekTimestamp
                         val isCoolingDown = timeSinceLastSeek < 5000L
                         
-                        val baseThreshold = if (isDeliberateOverride) 1500L else DRIFT_THRESHOLD_MS
-                        val thresholdMs = if (isCoolingDown && !isDeliberateOverride) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
+                        val baseThreshold = if (isYouTube || isDeliberateOverride) 1500L else DRIFT_THRESHOLD_MS
+                        val thresholdMs = if (isCoolingDown && (isYouTube || isDeliberateOverride)) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
                         
                         val drift = kotlin.math.abs(actualPos - expectedPos)
                         val isWrongTrack = !hasOverride && currentMediaId != null && state.currentMediaId != null && state.currentMediaId != currentMediaId
@@ -2197,13 +2197,14 @@ class SessionManager(
 
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
+            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
             val isOverridden = _sessionState.value.localOverride?.isDeliberateMismatch == true
             
-            // FIX: Sync Death Loop Protection
+            // FIX: Sync Death Loop Protection ONLY for YouTube and deliberate overrides
             val timeSinceLastSeek = System.currentTimeMillis() - lastSeekTimestamp
             val isCoolingDown = timeSinceLastSeek < 5000L
-            val baseThreshold = if (isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
-            val thresholdMs = if (isCoolingDown && !isOverridden) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
+            val baseThreshold = if (isYouTube || isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
+            val thresholdMs = if (isCoolingDown && (isYouTube || isOverridden)) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
             
             val needsSeek = positionDrift > thresholdMs
             
