@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.github.musicyou.models.Song
 import com.github.musicyou.utils.formatAsDuration
 import com.github.musicyou.utils.isAtLeastAndroid13
+import com.github.musicyou.utils.isMediaUriAccessible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -109,6 +110,7 @@ class VideosViewModel(application: Application) : AndroidViewModel(application) 
                         val bucketName = cursor.getString(bucketColumn) ?: "Unknown Folder"
 
                         val contentUri = ContentUris.withAppendedId(videoCollection, id)
+                        // Removed isMediaUriAccessible check because it blocks videos depending on file permissions.
 
                         val song = Song(
                             id = contentUri.toString(),

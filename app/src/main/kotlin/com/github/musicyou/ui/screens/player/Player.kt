@@ -128,6 +128,7 @@ import com.github.musicyou.ui.components.BaseMediaItemMenu
 import com.github.musicyou.ui.components.TooltipIconButton
 import com.github.musicyou.ui.styling.neumorphicPressed
 import com.github.musicyou.ui.styling.neumorphicRaised
+import com.github.musicyou.ui.styling.neumorphicBasin
 import com.github.musicyou.ui.styling.rememberNeumorphicColors
 import com.github.musicyou.utils.DisposableListener
 import com.github.musicyou.utils.isLandscape
@@ -137,9 +138,11 @@ import com.github.musicyou.utils.shouldBePlaying
 import com.github.musicyou.ui.screens.player.social.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.media3.common.util.UnstableApi
+import com.github.musicyou.enums.VideoQuality
 import com.github.musicyou.sync.protocol.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
@@ -347,13 +350,18 @@ fun Player(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 32.dp)
-                    .padding(bottom = 4.dp)
+                    .padding(bottom = 8.dp)
             ) {
                  Row(
                      verticalAlignment = Alignment.CenterVertically,
-                     horizontalArrangement = Arrangement.Center
+                     horizontalArrangement = Arrangement.Center,
+                     modifier = Modifier
+                         .neumorphicBasin(cornerRadius = 24.dp)
+                         .padding(horizontal = 16.dp, vertical = 6.dp)
                  ) {
                      val count = syncSessionState.connectedPeers.size
+                     val statusColor = if (count == 0) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                     
                      val pingText = if (currentPing != null && currentPing > 0) "📍 ${currentPing}ms" else ""
                      val pingColor =
                          if (currentPing != null && currentPing > 800)
@@ -361,12 +369,11 @@ fun Player(
                          else
                              Color(0xFF2E7D32)
 
-
                      if (syncSessionState.isHost) {
                          Icon(
                              imageVector = Icons.Filled.FiberManualRecord,
                              contentDescription = "Live",
-                             tint = Color.Red,
+                             tint = statusColor,
                              modifier = Modifier.size(10.dp)
                          )
                           Spacer(modifier = Modifier.width(6.dp))
@@ -374,28 +381,25 @@ fun Player(
                           // HOST VIEW: Live Session: [GroupIcon] [Count] [Ping]
                           Text(
                               text = "Live Session:",
-                              style = MaterialTheme.typography.labelMedium,
-                              color = MaterialTheme.colorScheme.primary
+                              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                              color = statusColor
                           )
-                          Spacer(modifier = Modifier.width(4.dp))
-                          Icon(
-                              imageVector = Icons.Outlined.Group,
-                              contentDescription = "Participants",
-                              tint = MaterialTheme.colorScheme.primary,
-                              modifier = Modifier.size(14.dp) // Slightly larger to match text
-                          )
-                          Spacer(modifier = Modifier.width(4.dp))
+                          val participantText = when (count) {
+                              0 -> "no one connected"
+                              1 -> "1 user connected"
+                              else -> "$count users connected"
+                          }
                           Text(
-                              text = "$count",
-                              style = MaterialTheme.typography.labelMedium,
-                              color = MaterialTheme.colorScheme.primary
+                              text = participantText,
+                              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                              color = statusColor
                           )
 
                           if (pingText.isNotEmpty()) {
                               Spacer(modifier = Modifier.width(8.dp))
                               Text(
                                   text = pingText,
-                                  style = MaterialTheme.typography.labelMedium,
+                                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                   color = pingColor
                               )
                           }
@@ -403,8 +407,8 @@ fun Player(
                           Icon(
                               imageVector = Icons.Filled.Link,
                               contentDescription = "Linked",
-                              tint = MaterialTheme.colorScheme.primary,
-                              modifier = Modifier.size(14.dp)
+                              tint = statusColor,
+                              modifier = Modifier.size(12.dp)
                           )
                            Spacer(modifier = Modifier.width(6.dp))
                            
@@ -415,27 +419,25 @@ fun Player(
                           ) {
                               Text(
                                  text = "Synced with Host",
-                                 style = MaterialTheme.typography.labelMedium,
-                                 color = MaterialTheme.colorScheme.primary
+                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                 color = statusColor
                               )
                               Spacer(modifier = Modifier.width(8.dp))
-                              Icon(
-                                  imageVector = Icons.Outlined.Group,
-                                  contentDescription = "Participants",
-                                  tint = MaterialTheme.colorScheme.primary,
-                                  modifier = Modifier.size(14.dp)
-                              )
-                              Spacer(modifier = Modifier.width(4.dp))
+                              val participantText = when (count) {
+                                  0 -> "no one connected"
+                                  1 -> "1 user connected"
+                                  else -> "$count users connected"
+                              }
                               Text(
-                                  text = "$count",
-                                  style = MaterialTheme.typography.labelMedium,
-                                  color = MaterialTheme.colorScheme.primary
+                                  text = participantText,
+                                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                  color = statusColor
                               )
                               if (pingText.isNotEmpty()) {
                                   Spacer(modifier = Modifier.width(8.dp))
                                   Text(
                                       text = pingText,
-                                      style = MaterialTheme.typography.labelMedium,
+                                      style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                       color = pingColor
                                   )
                               }
@@ -446,40 +448,7 @@ fun Player(
         }
     }
     
-    // --- NEW: Host-Only Toggle (Bottom) ---
-    val hostOnlyToggleContent: @Composable () -> Unit = {
-        if (syncSessionState.sessionId != null && syncSessionState.isHost) {
-             Box(
-                 modifier = Modifier
-                     .fillMaxWidth()
-                     .padding(horizontal = 24.dp)
-                     .padding(top = 8.dp)
-             ) {
-                 Row(
-                     verticalAlignment = Alignment.CenterVertically,
-                     modifier = Modifier
-                         .fillMaxWidth()
-                         // Use Grey background as requested for visibility
-                         .background(Color.LightGray.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                         // Remove border as background is now distinct
-                         .clickable { binder.sessionManager.setHostOnlyMode(!syncSessionState.hostOnlyMode) }
-                         .padding(horizontal = 16.dp, vertical = 6.dp)
-                 ) {
-                     Text(
-                         text = "Host-Only Mode",
-                         style = MaterialTheme.typography.bodyMedium,
-                         // Force correct contrast against LightGray
-                         color = MaterialTheme.colorScheme.onSurface, 
-                         modifier = Modifier.weight(1f)
-                     )
-                     ThinSwitch(
-                         checked = syncSessionState.hostOnlyMode,
-                         onCheckedChange = { binder.sessionManager.setHostOnlyMode(it) }
-                     )
-                 }
-             }
-        }
-    }
+
 
 
 
@@ -498,21 +467,19 @@ fun Player(
                 onGoToArtist = artistId?.let {
                     { onGoToArtist(it) }
                 },
-                isLocked = isParticipantLocked,
-                modifier = Modifier.weight(1f)
+                isLocked = isParticipantLocked
             )
 
             // SOCIAL: Interaction Triggers (Always visible in Sync Session, even if Locked)
             if (sessionManager != null && syncSessionState.sessionId != null) {
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 ReactionRow(onEmojiSelected = { sessionManager.sendReaction(it) })
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 FlashMessageRow(onMessageSelected = { sessionManager.sendFlashMessage(it) })
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
             }
             
-            // Inject Host-Only Toggle below Controls
-            hostOnlyToggleContent()
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 
@@ -547,11 +514,17 @@ fun Player(
         }
         val isVideo = remember(mediaItem, syncSessionState.localMatchUri, mediaItem.mediaMetadata.extras?.getBoolean("forceVideo"), isYouTube) {
             val path = syncSessionState.localMatchUri ?: mediaItem.mediaId
+            val title = mediaItem.mediaMetadata.title?.toString() ?: ""
             val isVid = isYouTube || 
                     path.endsWith(".mp4", ignoreCase = true) ||
                     path.endsWith(".mkv", ignoreCase = true) ||
                     path.endsWith(".mov", ignoreCase = true) ||
+                    path.endsWith(".webm", ignoreCase = true) ||
                     path.contains("video", ignoreCase = true) ||
+                    title.endsWith(".mp4", ignoreCase = true) ||
+                    title.endsWith(".mkv", ignoreCase = true) ||
+                    title.endsWith(".mov", ignoreCase = true) ||
+                    title.endsWith(".webm", ignoreCase = true) ||
                     mediaItem.mediaMetadata.extras?.getBoolean("forceVideo") == true
             
             android.util.Log.d("YouTubeSearch", "Player.kt computed isVideo=$isVid for mediaId=${mediaItem.mediaId}, path=$path, forceVideo=${mediaItem.mediaMetadata.extras?.getBoolean("forceVideo")}")
@@ -587,7 +560,7 @@ fun Player(
                     modifier = Modifier
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 0.dp)
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp)
                         .pointerInput(Unit) {
                             detectVerticalDragGestures(
                                 onVerticalDrag = { _, dragAmount ->
@@ -808,25 +781,27 @@ fun Player(
                                             modifier = Modifier.padding(8.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                            // Quality Toggle (YouTube only)
+                                            if (isYouTube) {
+                                                IconButton(
+                                                    onClick = { isShowingQualityDialog = true },
+                                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                                ) {
+                                                    val qualityText = when (videoQuality) {
+                                                        VideoQuality.AUTO -> "Auto"
+                                                        VideoQuality.QUALITY_360P -> "360p"
+                                                        VideoQuality.QUALITY_720P -> "720p"
+                                                        VideoQuality.QUALITY_1080P -> "1080p"
+                                                        VideoQuality.QUALITY_1440P -> "1440p"
+                                                        VideoQuality.QUALITY_2160P -> "2160p"
+                                                    }
+                                                    Text(
+                                                        text = qualityText,
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
                                             }
 
                                             // Rotation Button
@@ -933,13 +908,13 @@ fun Player(
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets.statusBars)
+                        modifier = Modifier.windowInsetsPadding(if (isFullScreen) WindowInsets(0, 0, 0, 0) else WindowInsets(0, 0, 0, 0))
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier.weight(
                                 if (isFullScreen) 1f 
-                                else if (syncSessionState.sessionId != null) 0.9f // Less weight for art in sync to see controls
+                                else if (syncSessionState.sessionId != null) 0.55f // Give optimal weight in sync session for full uncompressed controls
                                 else 1.25f
                             )
                         ) {
@@ -1087,25 +1062,27 @@ fun Player(
                                                 .padding(bottom = 16.dp, end = 24.dp),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            // Quality Toggle
-                                            IconButton(
-                                                onClick = { isShowingQualityDialog = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                val qualityText = when (videoQuality) {
-                                                    com.github.musicyou.enums.VideoQuality.AUTO -> "Auto"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_360P -> "360p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_720P -> "720p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1080P -> "1080p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_1440P -> "1440p"
-                                                    com.github.musicyou.enums.VideoQuality.QUALITY_2160P -> "2160p"
+                                            // Quality Toggle (YouTube only)
+                                            if (isYouTube) {
+                                                IconButton(
+                                                    onClick = { isShowingQualityDialog = true },
+                                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                                                ) {
+                                                    val qualityText = when (videoQuality) {
+                                                        VideoQuality.AUTO -> "Auto"
+                                                        VideoQuality.QUALITY_360P -> "360p"
+                                                        VideoQuality.QUALITY_720P -> "720p"
+                                                        VideoQuality.QUALITY_1080P -> "1080p"
+                                                        VideoQuality.QUALITY_1440P -> "1440p"
+                                                        VideoQuality.QUALITY_2160P -> "2160p"
+                                                    }
+                                                    Text(
+                                                        text = qualityText,
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
-                                                Text(
-                                                    text = qualityText,
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
                                             }
 
                                             // Rotation Button
@@ -1216,6 +1193,7 @@ fun Player(
                     FullscreenControls(
                         areControlsVisible = areControlsVisible || isSpeedGestureActive,
                         isPlaying = shouldBePlaying,
+                        isYouTube = isYouTube,
                         onExitFullscreen = { isFullScreen = false },
                         position = positionAndDuration.first,
                         duration = positionAndDuration.second,
@@ -1262,7 +1240,7 @@ fun Player(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { isQueueOpen = true }
-                            .padding(horizontal = 8.dp, vertical = 0.dp)
+                            .padding(horizontal = 32.dp, vertical = 12.dp)
                             .pointerInput(Unit) {
                                 detectVerticalDragGestures(
                                     onVerticalDrag = { _, dragAmount ->
@@ -1273,35 +1251,36 @@ fun Player(
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp)
                         ) {
-                            // LEFT ITEMS
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
+                            // Playlist / Queue
+                            IconButton(
+                                onClick = { isQueueOpen = true },
+                                modifier = Modifier.size(40.dp)
                             ) {
-                                // Playlist / Queue
-                                IconButton(onClick = { isQueueOpen = true }) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                        contentDescription = null
-                                    )
-                                }
-        
-                                // Sleep Timer
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                                    contentDescription = null
+                                )
+                            }
+
+                            // Sleep Timer
+                            Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                                 TooltipIconButton(
                                     description = R.string.sleep_timer,
                                     onClick = { isShowingSleepTimerDialog = true },
                                     icon = if (sleepTimerMillisLeft == null) Icons.Outlined.Timer else Icons.Filled.Timer
                                 )
                             }
-    
+
                             // Sync Session (Middle)
                             Box(
                                 modifier = Modifier
-                                    .size(56.dp)
+                                    .size(52.dp)
                                     .clip(CircleShape)
                                     .background(
                                         brush = androidx.compose.ui.graphics.Brush.linearGradient(
@@ -1318,62 +1297,59 @@ fun Player(
                                     imageVector = Icons.Outlined.Group, 
                                     contentDescription = "Sync Session", 
                                     tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(26.dp)
                                 )
                             }
-    
-                            // RIGHT ITEMS
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Download Button
-                                val context = LocalContext.current
-                                IconButton(
-                                    onClick = {
-                                        if (!isDownloaded && !isLocalItem) {
-                                            binder?.let { playerService ->
-                                                val dataSourceFactory = playerService.createCacheDataSource()
-                                                if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
-                                                    com.github.musicyou.utils.DownloadManager.downloadSong(
-                                                        context = context,
-                                                        mediaItem = mediaItem ?: return@IconButton,
-                                                        cacheDataSourceFactory = dataSourceFactory
-                                                    )
+
+                            // Download Button (Hide for local items to prevent crowding)
+                            if (!isLocalItem) {
+                                Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                                    val context = LocalContext.current
+                                    IconButton(
+                                        onClick = {
+                                            if (!isDownloaded) {
+                                                binder?.let { playerService ->
+                                                    val dataSourceFactory = playerService.createCacheDataSource()
+                                                    if (dataSourceFactory is androidx.media3.datasource.cache.CacheDataSource.Factory) {
+                                                        com.github.musicyou.utils.DownloadManager.downloadSong(
+                                                            context = context,
+                                                            mediaItem = mediaItem ?: return@IconButton,
+                                                            cacheDataSourceFactory = dataSourceFactory
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
-                                        contentDescription = "Download"
-                                    )
-                                }
-        
-                                // Persistent Speed Selector
-                                Box(contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = { isShowingSpeedDialog = true }) {
-                                        Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                                            contentDescription = "Download"
+                                        )
                                     }
                                 }
                             }
-                        }
 
-                        // Smart Local Source Indicator (Dynamic Overlay - doesn't disrupt spacing)
-                        val hasLocalMatch = syncSessionState.localMatchUri != null
-                        if (hasLocalMatch) {
-                            Box(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp)) {
-                                val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true
+                            // Persistent Speed Selector
+                            IconButton(
+                                onClick = { isShowingSpeedDialog = true },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(imageVector = Icons.Outlined.Speed, contentDescription = "Speed")
+                            }
+                            
+                            val hasLocalMatch = syncSessionState.localMatchUri != null || syncSessionState.localOverride != null
+                            if (hasLocalMatch) {
+                                val isActive = syncSessionState.clockSyncMessage?.contains("Local") == true || syncSessionState.localOverride != null
                                 val sourceColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 val sourceIcon = if (isActive) Icons.Filled.Folder else Icons.Outlined.Folder
-                                TooltipIconButton(
-                                    description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
-                                    onClick = { binder.sessionManager.forcePlayLocal() },
-                                    icon = sourceIcon,
-                                    tint = sourceColor
-                                )
+                                Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                                    TooltipIconButton(
+                                        description = if (isActive) R.string.playing_from_local else R.string.switch_to_local,
+                                        onClick = { binder.sessionManager.forcePlayLocal() },
+                                        icon = sourceIcon,
+                                        tint = sourceColor
+                                    )
+                                }
                             }
                         }
                     }
@@ -1552,19 +1528,29 @@ fun Player(
 @Composable
 fun ReactionRow(onEmojiSelected: (String) -> Unit) {
     val emojis = listOf("❤️", "🔥", "🙌", "😭", "😮", "🕺", "✨", "💯")
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly
+    val neumorphicColors = com.github.musicyou.ui.styling.rememberNeumorphicColors()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp)
     ) {
-        emojis.forEach { emoji ->
-            Text(
-                text = emoji,
-                fontSize = 20.sp, // Reduced from 24sp
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable { onEmojiSelected(emoji) }
-                    .padding(4.dp) // Reduced from 6dp
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .neumorphicBasin(cornerRadius = 24.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            emojis.forEach { emoji ->
+                Text(
+                    text = emoji,
+                    fontSize = 20.sp,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onEmojiSelected(emoji) }
+                        .padding(4.dp)
+                )
+            }
         }
     }
 }
@@ -1681,6 +1667,7 @@ fun Modifier.scale(scale: Float): Modifier = this.then(
 fun FullscreenControls(
     areControlsVisible: Boolean,
     isPlaying: Boolean,
+    isYouTube: Boolean = false,
     onExitFullscreen: () -> Unit,
     position: Long,
     duration: Long,
@@ -1757,17 +1744,19 @@ fun FullscreenControls(
             modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 56.dp), // Position above the seekbar
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Quality Toggle
-            IconButton(
-                onClick = onShowQuality,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Text(
-                    text = videoQualityText,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            // Quality Toggle (YouTube only)
+            if (isYouTube) {
+                IconButton(
+                    onClick = onShowQuality,
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+                ) {
+                    Text(
+                        text = videoQualityText,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // Rotation
@@ -2019,11 +2008,17 @@ fun ManualMatchOverlay(
             Spacer(modifier = Modifier.height(24.dp))
             androidx.compose.material3.Button(
                 onClick = { launcher.launch("*/*") },
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Icon(Icons.Filled.Folder, contentDescription = "Select File")
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Select Local File")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            androidx.compose.material3.TextButton(
+                onClick = { sessionManager.cancelManualMatch() }
+            ) {
+                Text("Cancel", color = Color.White)
             }
         }
     }

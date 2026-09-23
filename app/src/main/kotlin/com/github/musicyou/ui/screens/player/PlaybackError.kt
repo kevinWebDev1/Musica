@@ -49,6 +49,7 @@ import com.github.musicyou.service.LoginRequiredException
 import com.github.musicyou.service.PlayableFormatNotFoundException
 import com.github.musicyou.service.UnplayableException
 import com.github.musicyou.service.VideoIdMismatchException
+import com.github.musicyou.service.isFileNotFoundError
 import kotlinx.coroutines.launch
 import java.net.UnknownHostException
 import java.nio.channels.UnresolvedAddressException
@@ -62,12 +63,13 @@ fun PlaybackError(
     val scope = rememberCoroutineScope()
     var isShowingLogsDialog by rememberSaveable { mutableStateOf(false) }
 
-    val errorMessage = when (error?.cause?.cause) {
-        is UnresolvedAddressException, is UnknownHostException -> stringResource(id = R.string.network_error)
-        is PlayableFormatNotFoundException -> stringResource(id = R.string.playable_format_not_found_error)
-        is UnplayableException -> stringResource(id = R.string.video_source_deleted_error)
-        is LoginRequiredException -> stringResource(id = R.string.server_restrictions_error)
-        is VideoIdMismatchException -> stringResource(id = R.string.id_mismatch_error)
+    val errorMessage = when {
+        isFileNotFoundError(error) -> stringResource(id = R.string.video_source_deleted_error)
+        error?.cause?.cause is UnresolvedAddressException || error?.cause?.cause is UnknownHostException || error?.cause is UnknownHostException -> stringResource(id = R.string.network_error)
+        error?.cause?.cause is PlayableFormatNotFoundException || error?.cause is PlayableFormatNotFoundException -> stringResource(id = R.string.playable_format_not_found_error)
+        error?.cause?.cause is UnplayableException || error?.cause is UnplayableException -> stringResource(id = R.string.video_source_deleted_error)
+        error?.cause?.cause is LoginRequiredException || error?.cause is LoginRequiredException -> stringResource(id = R.string.server_restrictions_error)
+        error?.cause?.cause is VideoIdMismatchException || error?.cause is VideoIdMismatchException -> stringResource(id = R.string.id_mismatch_error)
         else -> stringResource(id = R.string.unknown_playback_error)
     }
 

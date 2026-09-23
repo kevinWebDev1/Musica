@@ -26,6 +26,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.support.v4.media.session.MediaSessionCompat
 import android.text.format.DateUtils
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -96,6 +97,7 @@ import com.github.musicyou.utils.isAtLeastAndroid6
 import com.github.musicyou.utils.isAtLeastAndroid8
 import com.github.musicyou.utils.isInvincibilityEnabledKey
 import com.github.musicyou.auth.ProfileManager
+import com.github.musicyou.utils.isMediaUriAccessible
 import com.github.musicyou.utils.isShowingThumbnailInLockscreenKey
 import com.github.musicyou.utils.mediaItems
 import com.github.musicyou.utils.persistentQueueKey
@@ -106,6 +108,7 @@ import com.github.musicyou.utils.resumePlaybackWhenDeviceConnectedKey
 import com.github.musicyou.utils.shouldBePlaying
 import com.github.musicyou.utils.skipSilenceKey
 import com.github.musicyou.utils.timer
+import com.github.musicyou.utils.toast
 import com.github.musicyou.utils.trackLoopEnabledKey
 import com.github.musicyou.utils.volumeNormalizationKey
 import kotlinx.coroutines.CoroutineScope
@@ -620,6 +623,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     override fun onPlayerError(error: PlaybackException) {
         super.onPlayerError(error)
         
+        val currentItem = player.currentMediaItem
+        if (currentItem?.mediaId?.startsWith("dummy-local-file:") == true) {
+            Log.d("PlayerService", "Ignoring expected ExoPlayer load error for dummy sync item: ${currentItem.mediaId}")
+            return
+        }
+        
         val cause = error.cause?.cause
         if (cause is LoginRequiredException || cause is VideoIdMismatchException) {
             val mediaItem = player.currentMediaItem
@@ -638,6 +647,26 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 
                 coroutineScope.launch(Dispatchers.Main) {
                     hybridPlaybackEngine.loadMediaItem(youtubeMediaItem, currentPosition, playWhenReady)
+                }
+            }
+        } else if (isFileNotFoundError(error)) {
+            val mediaItem = player.currentMediaItem
+            Log.w("PlayerService", "Playback error - local file not found: ${mediaItem?.mediaId}")
+            
+            coroutineScope.launch(Dispatchers.Main) {
+                toast(getString(R.string.video_source_deleted_error))
+                
+                val currentIndex = player.currentMediaItemIndex
+                if (player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem()
+                    player.prepare()
+                    player.play()
+                } else {
+                    player.stop()
+                }
+                
+                if (currentIndex >= 0 && currentIndex < player.mediaItemCount) {
+                    player.removeMediaItem(currentIndex)
                 }
             }
         }
@@ -766,13 +795,17 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             val queuedSong = Database.queue()
             Database.clearQueue()
 
-            if (queuedSong.isEmpty()) return@query
+            val validQueuedSongs = queuedSong.filter {
+                isMediaUriAccessible(it.mediaItem.mediaId)
+            }
 
-            val index = queuedSong.indexOfFirst { it.position != null }.coerceAtLeast(0)
+            if (validQueuedSongs.isEmpty()) return@query
+
+            val index = validQueuedSongs.indexOfFirst { it.position != null }.coerceAtLeast(0)
 
             runBlocking(Dispatchers.Main) {
                 player.setMediaItems(
-                    queuedSong.map { mediaItem ->
+                    validQueuedSongs.map { mediaItem ->
                         mediaItem.mediaItem.buildUpon()
                             .setUri(mediaItem.mediaItem.mediaId)
                             .setCustomCacheKey(mediaItem.mediaItem.mediaId)
@@ -781,7 +814,7 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                             }
                     },
                     index,
-                    queuedSong[index].position ?: C.TIME_UNSET
+                    validQueuedSongs.getOrNull(index)?.position ?: C.TIME_UNSET
                 )
                 player.prepare()
 

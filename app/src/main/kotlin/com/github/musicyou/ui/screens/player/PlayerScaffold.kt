@@ -53,6 +53,14 @@ fun PlayerScaffold(
     val currentRoute = navBackStackEntry?.destination?.route
     val isOnFullscreenPlayer = currentRoute?.contains("FullscreenPlayer") == true
 
+    val binder = LocalPlayerServiceBinder.current
+    val stopPlayback = {
+        binder?.stopRadio()
+        binder?.player?.clearMediaItems()
+        binder?.hybridPlaybackEngine?.youtubeEngine?.release()
+        scope.launch { sheetState.hide() }
+    }
+
     Box(
         modifier = Modifier.windowInsetsPadding(
             WindowInsets(
@@ -80,8 +88,8 @@ fun PlayerScaffold(
                                         // Swiped up -> Open full player
                                         navController.navigate(Routes.FullscreenPlayer)
                                     } else if (dragAmount > 20f) {
-                                        // Swiped down -> Hide miniplayer
-                                        scope.launch { sheetState.hide() }
+                                        // Swiped down -> Hide miniplayer & stop
+                                        stopPlayback()
                                     }
                                 }
                             }
@@ -91,7 +99,7 @@ fun PlayerScaffold(
                                 navController.navigate(Routes.FullscreenPlayer)
                             },
                             stopPlayer = {
-                                scope.launch { sheetState.hide() }
+                                stopPlayback()
                             }
                         )
                     }

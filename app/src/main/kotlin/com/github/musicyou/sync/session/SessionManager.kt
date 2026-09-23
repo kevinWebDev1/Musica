@@ -1,6 +1,7 @@
 package com.github.musicyou.sync.session
 
 import android.util.Log
+import androidx.media3.common.MediaItem
 import com.github.musicyou.sync.playback.PlaybackEngine
 import com.github.musicyou.sync.protocol.*
 import com.github.musicyou.sync.time.ClockState
@@ -181,6 +182,7 @@ class SessionManager(
         }.launchIn(scope)
 
         // Sync transport layer's sessionId and connectedPeers to sessionState
+        var previousSessionId: String? = null
         transportLayer.sessionId.onEach { sessionId ->
             Log.d(TAG, "init: sessionId changed to: $sessionId")
             _sessionState.update { current ->
@@ -201,12 +203,13 @@ class SessionManager(
                 // leaveSession() already calls updateStatus("idle", null)
             }
             
-            // STRICT RULE: If Host disconnects (sessionId null), Participant must stop playback.
-            if (sessionId == null && !isHost) {
-                Log.i(TAG, "init: Session ended (disconnected). Stopping local playback.")
+            // STRICT RULE: If Host disconnects (sessionId null after having been connected), Participant must stop playback.
+            if (sessionId == null && previousSessionId != null && !isHost) {
+                Log.i(TAG, "init: Session ended (disconnected from $previousSessionId). Stopping local playback.")
                 playbackEngine.pause()
                 playbackEngine.seekTo(0)
             }
+            previousSessionId = sessionId
         }.launchIn(scope)
         
         
@@ -414,8 +417,16 @@ class SessionManager(
                     if (state.isPlaying) {
                         Log.i(TAG, "Host state: resumed play")
                         val (title, artist, thumbnailUrl) = getCurrentMetadata()
+                        val targetMediaId = state.mediaId ?: ""
+                        var fingerprintToSend = _sessionState.value.mediaFingerprint
+                        if (fingerprintToSend == null && (targetMediaId.startsWith("content://") || targetMediaId.startsWith("file://"))) {
+                            fingerprintToSend = com.github.musicyou.utils.DeviceMediaManager.getFingerprintFromUri(context, targetMediaId)
+                            if (fingerprintToSend != null) {
+                                _sessionState.update { it.copy(mediaFingerprint = fingerprintToSend) }
+                            }
+                        }
                         val event = PlayEvent(
-                            mediaId = state.mediaId ?: "",
+                            mediaId = targetMediaId,
                             startPos = state.currentPositionMs,
                             timestamp = now,
                             title = title,
@@ -423,7 +434,7 @@ class SessionManager(
                             thumbnailUrl = thumbnailUrl,
                             requesterName = getCurrentUserName(),
                             requesterAvatar = getCurrentAvatar(),
-                            mediaFingerprint = _sessionState.value.mediaFingerprint // Include fingerprint
+                            mediaFingerprint = fingerprintToSend // Include fingerprint
                         )
                         if (hasPeers) eventBroadcaster?.invoke(event)
                         
@@ -461,6 +472,13 @@ class SessionManager(
                 if (lastMediaId != state.mediaId && state.mediaId != null) {
                     Log.i(TAG, "Host state: changed track to ${state.mediaId}")
                     val (title, artist, thumbnailUrl) = getCurrentMetadata()
+                    var fingerprintToSend = _sessionState.value.mediaFingerprint
+                    if (fingerprintToSend == null && (state.mediaId.startsWith("content://") || state.mediaId.startsWith("file://"))) {
+                        fingerprintToSend = com.github.musicyou.utils.DeviceMediaManager.getFingerprintFromUri(context, state.mediaId)
+                        if (fingerprintToSend != null) {
+                            _sessionState.update { it.copy(mediaFingerprint = fingerprintToSend) }
+                        }
+                    }
                     val event = PlayEvent(
                         mediaId = state.mediaId,
                         startPos = state.currentPositionMs,
@@ -470,7 +488,7 @@ class SessionManager(
                         thumbnailUrl = thumbnailUrl,
                         requesterName = getCurrentUserName(),
                         requesterAvatar = getCurrentAvatar(),
-                        mediaFingerprint = _sessionState.value.mediaFingerprint // Include fingerprint
+                        mediaFingerprint = fingerprintToSend // Include fingerprint
                     )
                     if (hasPeers) eventBroadcaster?.invoke(event)
                     
@@ -1009,16 +1027,24 @@ class SessionManager(
                             speed = state.playbackSpeed
                         )
                         val actualPos = playbackEngine.getCurrentPosition()
+                        val currentMediaId = playbackEngine.playbackState.value.mediaId
                         
-                        val isVideo = isVideoTrack(state.currentMediaId)
-                        val thresholdMs = if (isVideo) 3000L else DRIFT_THRESHOLD_MS
+                        val hasOverride = state.localOverride != null
+                        val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
+                        val thresholdMs = if (isYouTube || (hasOverride && state.localOverride.isDeliberateMismatch)) 3000L else DRIFT_THRESHOLD_MS
                         
                         val drift = kotlin.math.abs(actualPos - expectedPos)
-                        if (drift > thresholdMs) {
-                            Log.w(TAG, "DRIFT MONITOR: Significant drift detected! actual=$actualPos, expected=$expectedPos, drift=${drift}ms. Resyncing...")
+                        val isWrongTrack = !hasOverride && currentMediaId != null && state.currentMediaId != null && state.currentMediaId != currentMediaId
+                        
+                        android.util.Log.d("SyncBug", "DriftMonitor check: isWrongTrack=$isWrongTrack, hasOverride=$hasOverride, drift=${drift}ms")
+                        
+                        if (isWrongTrack || drift > thresholdMs) {
+                            if (isWrongTrack) lastSyncedMediaId = null
+                            android.util.Log.d("SyncBug", "DriftMonitor forcing snap-back! (isWrongTrack=$isWrongTrack, drift=$drift > threshold=$thresholdMs)")
+                            Log.w(TAG, "DRIFT MONITOR: Sync issue detected! WrongTrack=$isWrongTrack, drift=${drift}ms. Resyncing...")
                             applyAuthoritativeSnapshot(state, "DriftMonitor")
                         } else {
-                            Log.v(TAG, "DRIFT MONITOR: Drift within limits (${drift}ms)")
+                            Log.v(TAG, "DRIFT MONITOR: Track and drift within limits (${drift}ms)")
                         }
                     }
                 }
@@ -1378,9 +1404,24 @@ class SessionManager(
             return
         }
         
-        // Check Host-Only Mode for participants
+        // If not in a sync session, no sync broadcast or peer coordination is needed
+        if (_sessionState.value.sessionId == null) {
+            Log.d(TAG, "onTrackChanged: Standalone playback (no active session). No sync action needed for $mediaId")
+            return
+        }
+        
         if (!isHost && _sessionState.value.hostOnlyMode) {
             Log.d(TAG, "onTrackChanged: Participant blocked (Host-Only Mode). Triggering snap-back resync.")
+            android.util.Log.d("SyncBug", "onTrackChanged block triggered! Forcing immediate local snap-back.")
+            
+            // Clear lastSyncedMediaId so applyAuthoritativeSnapshot doesn't mistakenly skip loading the track
+            lastSyncedMediaId = null
+            
+            // Immediately snap back locally using last known authoritative state
+            scope.launch {
+                applyAuthoritativeSnapshot(_sessionState.value, "snap-back")
+            }
+            // Request fresh state from host just in case
             requestFullSync("manual-change-blocked")
             return
         }
@@ -1608,6 +1649,7 @@ class SessionManager(
                 val hostNow = timeSyncEngine.getGlobalTime()
                 val hostPos = if (isHost) playbackEngine.playbackState.value.currentPositionMs else event.startPos
                 
+                val currentSessionState = _sessionState.value
                 applyAuthoritativeSnapshot(
                     SessionState(
                         currentMediaId = event.mediaId,
@@ -1618,7 +1660,9 @@ class SessionManager(
                         title = event.title,
                         artist = event.artist,
                         thumbnailUrl = event.thumbnailUrl,
-                        mediaFingerprint = event.mediaFingerprint // Propagate fingerprint to state
+                        mediaFingerprint = event.mediaFingerprint, // Propagate fingerprint to state
+                        localMatchUri = currentSessionState.localMatchUri,
+                        localOverride = currentSessionState.localOverride
                     ),
                     "PlayEvent"
                 )
@@ -1670,9 +1714,6 @@ class SessionManager(
                 
                 // Apply snapshot FIRST (ensures pause executes before state update)
                 applyAuthoritativeSnapshot(pauseSnapshot, "PauseEvent")
-                
-                // THEN update state for UI consistency
-                _sessionState.update { pauseSnapshot }
                 
                 // Aggressive Name Collection: Capture requester's name and avatar
                 event.requesterName?.let { name ->
@@ -1882,8 +1923,8 @@ class SessionManager(
                     Log.i(TAG, "applyAuthoritativeSnapshot: Acquired lock - applying state v${state.stateVersion} (hostUid=${state.hostUid}) from source=$source")
                     
                     // VERSION CHECK INSIDE LOCK - Prevents TOCTOU race where newer snapshot arrives during apply
-                    // FIX: Allow DriftMonitor to bypass version check (force resync even if version matches)
-                    val isDriftCorrection = source == "DriftMonitor"
+                    // FIX: Allow DriftMonitor and snap-back to bypass version check (force resync even if version matches)
+                    val isDriftCorrection = source == "DriftMonitor" || source == "snap-back"
                     if (!isHost && !isDriftCorrection && state.stateVersion > 0 && state.stateVersion <= lastAppliedVersion) {
                         Log.d(TAG, "applyAuthoritativeSnapshot: IGNORED (stale version ${state.stateVersion} <= $lastAppliedVersion)")
                         return@withLock
@@ -1991,6 +2032,10 @@ class SessionManager(
                 val finalArtist = if (useExistingMetadata) current.artist else state.artist
                 val finalUrl = if (useExistingMetadata) current.thumbnailUrl else state.thumbnailUrl
 
+                // Local fields that are NOT part of network state must be preserved from 'current'
+                val preserveLocalMatch = current.localOverride != null || 
+                    (current.localMatchUri != null && (current.currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId))
+
                 state.copy(
                     isHost = current.isHost,
                     sessionId = current.sessionId,
@@ -2005,7 +2050,11 @@ class SessionManager(
                     
                     title = finalTitle,
                     artist = finalArtist,
-                    thumbnailUrl = finalUrl
+                    thumbnailUrl = finalUrl,
+                    localMatchUri = if (preserveLocalMatch) current.localMatchUri else null,
+                    localOverride = current.localOverride,
+                    isPendingManualMatch = if (preserveLocalMatch) false else (if (state.isPendingManualMatch) true else current.isPendingManualMatch),
+                    clockSyncMessage = if (current.localOverride != null) "Playing from manually selected file 📂" else (state.clockSyncMessage ?: current.clockSyncMessage)
                 )
             }
 
@@ -2029,9 +2078,14 @@ class SessionManager(
         // we must force a reload so the UI gets the metadata!
         val isMissingMetadata = state.currentMediaId != null && playbackEngine.playbackState.value.mediaItem == null
         val engineMediaId = playbackEngine.playbackState.value.mediaId
-        val isSameTrack = !isMissingMetadata && (currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId || engineMediaId == state.currentMediaId) && state.currentMediaId != null
+        val hasActiveOverride = _sessionState.value.localOverride != null
+        val isSameTrack = !isMissingMetadata && (hasActiveOverride || currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId || engineMediaId == state.currentMediaId) && state.currentMediaId != null
 
-        if ((!isSameTrack || _sessionState.value.localMatchUri == null) && isPeerLocalUri) {
+        if (hasActiveOverride) {
+            resolvedUri = _sessionState.value.localOverride?.manualUri ?: _sessionState.value.localMatchUri
+            syncMessage = "Playing from manually selected file 📂"
+            Log.d("MusicSyncFlow", "applySnapshot: Active LocalOverride detected: $resolvedUri. Bypassing fingerprint match.")
+        } else if ((!isSameTrack || _sessionState.value.localMatchUri == null) && isPeerLocalUri) {
             if (state.mediaFingerprint == null) {
                 Log.w("MusicSyncFlow", "applySnapshot: ABORTING - received peer's local URI (${state.currentMediaId}) without fingerprint. Ignoring.")
                 return@withLock
@@ -2063,14 +2117,28 @@ class SessionManager(
                         localMatchUri = null
                     )
                 }
-                Log.w("MusicSyncFlow", "applySnapshot: ABORTING - will not load peer's local URI on this device")
+                Log.w("MusicSyncFlow", "applySnapshot: ABORTING - loading dummy item to show Manual Match UI")
                 playbackEngine.pause()
+                
+                // Inject dummy item so MiniPlayer appears and user can open the Player screen
+                val rawMediaId = state.currentMediaId ?: "dummy-local-file"
+                val dummyMediaId = if (rawMediaId.startsWith("dummy-local-file:")) rawMediaId else "dummy-local-file:$rawMediaId"
+                val dummyItem = MediaItem.Builder()
+                    .setMediaId(dummyMediaId)
+                    .setMediaMetadata(
+                        androidx.media3.common.MediaMetadata.Builder()
+                            .setTitle(state.mediaFingerprint.title)
+                            .setArtist(state.artist ?: "Unknown Artist")
+                            .build()
+                    )
+                    .build()
+                playbackEngine.loadMediaItem(dummyItem, 0L, false)
                 return@withLock
             }
         } else if (isSameTrack && isPeerLocalUri) {
             // Keep using the existing resolved URI if we are already on this track
             resolvedUri = _sessionState.value.localMatchUri
-        } else if (!isPeerLocalUri && !isHost) {
+        } else if (!isPeerLocalUri && !isHost && !hasActiveOverride) {
             // Not a peer local URI, so clear any leftover local match
             _sessionState.update { it.copy(localMatchUri = null) }
         }
@@ -2087,7 +2155,7 @@ class SessionManager(
                 .setMediaId(mediaId)
                 .setMediaMetadata(metadataBuilder.build())
             
-            val uriToSet = if (isPeerLocalUri) {
+            val uriToSet = if (isPeerLocalUri || hasActiveOverride) {
                 resolvedUri
             } else {
                 resolvedUri ?: if (mediaId.startsWith("content://") || mediaId.startsWith("file://") || mediaId.startsWith("http://") || mediaId.startsWith("https://")) mediaId else null
@@ -2104,8 +2172,8 @@ class SessionManager(
             mediaItem = mediaItemBuilder.build()
         }
         
-        if (state.mediaFingerprint == null && _sessionState.value.localMatchUri != null) {
-             _sessionState.update { it.copy(localMatchUri = null) }
+        if (state.mediaFingerprint == null && _sessionState.value.localMatchUri != null && !isPeerLocalUri && !hasActiveOverride) {
+             _sessionState.update { it.copy(localMatchUri = null, localOverride = null) }
         }
 
         // Apply Playback Speed
@@ -2116,10 +2184,11 @@ class SessionManager(
 
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
-            val isVideo = isVideoTrack(state.currentMediaId)
-            val thresholdMs = if (isVideo) 3000L else POSITION_DRIFT_THRESHOLD_MS
+            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
+            val isOverridden = _sessionState.value.localOverride?.isDeliberateMismatch == true
+            val thresholdMs = if (isYouTube || isOverridden) 3000L else POSITION_DRIFT_THRESHOLD_MS
             val needsSeek = positionDrift > thresholdMs
-            Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs)")
+            Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs, isOverridden=$isOverridden)")
             
             when (state.playbackStatus) {
                 SessionState.Status.PLAYING -> {
@@ -2268,11 +2337,22 @@ class SessionManager(
      */
     fun setManualMatchUri(uri: String) {
         Log.i(TAG, "Manual file selection triggered! Overriding localMatchUri with: $uri")
+        val override = com.github.musicyou.sync.data.model.LocalOverrideState(
+            manualUri = uri,
+            isDeliberateMismatch = true
+        )
         _sessionState.update { it.copy(
             localMatchUri = uri,
+            localOverride = override,
             clockSyncMessage = "Playing from manually selected file 📂",
             isPendingManualMatch = false // Clear pending flag once a file is selected
         )}
+        
+        // FIX: Suppress onTrackChanged broadcast when local file is loaded.
+        // Without this, loading the manual file triggers an unwanted PlayEvent broadcast back to the Host.
+        lastSyncedMediaId = _sessionState.value.currentMediaId
+        lastSyncedTimestamp = System.currentTimeMillis()
+        
         forcePlayLocal()
     }
 
@@ -2282,7 +2362,8 @@ class SessionManager(
     fun cancelManualMatch() {
         Log.i(TAG, "Manual file selection cancelled.")
         _sessionState.update { it.copy(
-            isPendingManualMatch = false // Clear pending flag
+            isPendingManualMatch = false, // Clear pending flag
+            localOverride = null
         )}
     }
 

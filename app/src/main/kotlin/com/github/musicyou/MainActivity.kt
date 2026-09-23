@@ -104,22 +104,22 @@ class MainActivity : ComponentActivity() {
     private var data by mutableStateOf<Uri?>(null)
     private lateinit var authManager: AuthManager
 
-    override fun onStart() {
-        super.onStart()
-        bindService(intent<PlayerService>(), serviceConnection, BIND_AUTO_CREATE)
-    }
-
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        bindService(intent<PlayerService>(), serviceConnection, BIND_AUTO_CREATE)
+
         // Initialize AuthManager
         authManager = AuthManager(this)
 
         val launchedFromNotification = intent?.extras?.getBoolean("expandPlayerBottomSheet") == true
-        data = intent?.data ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
+        data = intent?.data 
+            ?: (if ((intent?.clipData?.itemCount ?: 0) > 0) intent?.clipData?.getItemAt(0)?.uri else null)
+            ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
+        android.util.Log.i("[INTENT-MEDIA]", "onCreate intent action=${intent?.action}, data=$data, clipData=${intent?.clipData}")
 
         setContent {
             // Check for updates using the Webstore API
@@ -168,15 +168,9 @@ class MainActivity : ComponentActivity() {
                                 sessionState.hostOnlyMode == true
 
                         // Block collapse/hide for locked participants
-                        if (isParticipantLocked && (value == SheetValue.Hidden || value == SheetValue.PartiallyExpanded)) {
+                        if (isParticipantLocked && value == SheetValue.Hidden) {
                             android.util.Log.d("MusicSync", "MainActivity: Blocking player dismiss (Host-Only Mode)")
                             return@rememberStandardBottomSheetState false
-                        }
-
-                        if (value == SheetValue.Hidden) {
-                            binder?.stopRadio()
-                            binder?.player?.clearMediaItems()
-                            binder?.hybridPlaybackEngine?.youtubeEngine?.release()
                         }
 
                         return@rememberStandardBottomSheetState true
@@ -259,8 +253,9 @@ class MainActivity : ComponentActivity() {
                             com.github.musicyou.enums.VideoQuality.AUTO
                         )
 
-                        var lastMediaIdForQuality by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
-                        val currentMediaIdForQuality = binder?.youtubeEngine?.playbackState?.value?.mediaId
+                        var lastMediaIdForQuality by remember { mutableStateOf<String?>(null) }
+                        val ytPlaybackState by binder?.youtubeEngine?.playbackState?.collectAsState() ?: remember { mutableStateOf(null) }
+                        val currentMediaIdForQuality = ytPlaybackState?.mediaId
 
                         LaunchedEffect(videoQualityPref, currentMediaIdForQuality) {
                             val isQualityChange = lastMediaIdForQuality != null && lastMediaIdForQuality == currentMediaIdForQuality
@@ -495,11 +490,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-                DisposableEffect(binder?.player) {
+                DisposableEffect(binder?.player, data) {
                     val player = binder?.player ?: return@DisposableEffect onDispose { }
 
-                    if (player.currentMediaItem == null) scope.launch { playerState.hide() }
-                    else {
+                    if (player.currentMediaItem == null && data == null) {
+                        scope.launch { playerState.hide() }
+                    } else if (player.currentMediaItem != null) {
                         if (launchedFromNotification) {
                             intent.replaceExtras(Bundle())
                             scope.launch { playerState.expand() }
@@ -527,14 +523,20 @@ class MainActivity : ComponentActivity() {
                             // Always make sure the MiniPlayer is visible (sheet partially expanded)
                             scope.launch { playerState.partialExpand() }
                             
-                            // Automatically jump to fullscreen player when YouTube video is loaded (if setting is enabled)
+                            // Automatically jump to fullscreen player when video is loaded
                             val autoExpand = prefs.getBoolean(com.github.musicyou.utils.autoExpandYouTubeVideoKey, true)
-                            if (autoExpand && currentMediaId.startsWith("youtube-embed:")) {
+                            val isVideo = currentMediaId.startsWith("youtube-embed:") ||
+                                    state.mediaItem?.mediaMetadata?.extras?.getBoolean("forceVideo") == true ||
+                                    currentMediaId.endsWith(".mp4", ignoreCase = true) ||
+                                    currentMediaId.endsWith(".mkv", ignoreCase = true) ||
+                                    currentMediaId.endsWith(".webm", ignoreCase = true) ||
+                                    currentMediaId.endsWith(".mov", ignoreCase = true)
+
+                            if (autoExpand && isVideo) {
                                 scope.launch {
                                     // Add a small delay to ensure the UI/NavHost is fully resumed and ready to accept navigation.
-                                    // This is especially important for guest sessions receiving asynchronous state sync events.
-                                    kotlinx.coroutines.delay(200)
-                                    android.util.Log.d("ytSync", "MainActivity: Attempting to navigate to FullscreenPlayer for YouTube sync! mediaId=$currentMediaId")
+                                    kotlinx.coroutines.delay(150)
+                                    android.util.Log.d("ytSync", "MainActivity: Attempting to navigate to FullscreenPlayer for video! mediaId=$currentMediaId")
                                     var retryCount = 0
                                     while (retryCount < 5) {
                                         try {
@@ -552,11 +554,11 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                        } else if (currentMediaId == null) {
+                        } else if (currentMediaId == null && data == null) {
                             lastMediaId = null
                             scope.launch { 
                                 kotlinx.coroutines.delay(150)
-                                if (engine.playbackState.value.mediaId == null && engine.playbackState.value.mediaItem?.mediaId == null) {
+                                if (data == null && engine.playbackState.value.mediaId == null && engine.playbackState.value.mediaItem?.mediaId == null) {
                                     playerState.hide() 
                                 }
                             }
@@ -566,62 +568,140 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(data) {
                     val uri = data ?: return@LaunchedEffect
+                    android.util.Log.i("[INTENT-MEDIA]", "LaunchedEffect(data) processing uri: $uri")
 
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        // DEEP LINK: Session Join
-                        if (uri.scheme == "musicyou" && uri.host == "sync") {
-                            val path = uri.pathSegments.firstOrNull()
-                            if (path == "join") {
-                                uri.getQueryParameter("code")?.let { code ->
-                                    android.util.Log.i("DeepLink", "Joining session via Deep Link: $code")
-                                    val binder = snapshotFlow { binder }.filterNotNull().first()
-                                    binder.sessionManager.joinSession(code)
+                    // DEEP LINK: Session Join
+                    if (uri.scheme == "musicyou" && uri.host == "sync") {
+                        val path = uri.pathSegments.firstOrNull()
+                        if (path == "join") {
+                            uri.getQueryParameter("code")?.let { code ->
+                                android.util.Log.i("DeepLink", "Joining session via Deep Link: $code")
+                                val currentBinder = snapshotFlow { binder }.filterNotNull().first()
+                                currentBinder.sessionManager.joinSession(code)
 
-                                    withContext(Dispatchers.Main) {
-                                        android.widget.Toast.makeText(this@MainActivity, "Joining session...", android.widget.Toast.LENGTH_SHORT).show()
-                                        playerState.partialExpand()
-                                    }
-                                }
+                                android.widget.Toast.makeText(this@MainActivity, "Joining session...", android.widget.Toast.LENGTH_SHORT).show()
+                                scope.launch { playerState.partialExpand() }
                             }
-                            data = null
-                            return@launch
+                        }
+                        data = null
+                        return@LaunchedEffect
+                    }
+
+                    // LOCAL MEDIA (File Manager / Gallery) OR DIRECT STREAM (MovieBox)
+                    val isLocalScheme = uri.scheme == "content" || uri.scheme == "file"
+                    val isYouTubeHost = uri.host?.contains("youtube.com") == true || uri.host == "youtu.be"
+                    val isDirectStream = (uri.scheme == "http" || uri.scheme == "https") && !isYouTubeHost
+
+                    if (isLocalScheme || isDirectStream) {
+                        if (uri.scheme == "content") {
+                            try {
+                                contentResolver.takePersistableUriPermission(
+                                    uri,
+                                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                )
+                            } catch (e: Exception) {
+                                android.util.Log.w("MusicaIntent", "Could not take persistable permission for $uri", e)
+                            }
                         }
 
-                        when (val path = uri.pathSegments.firstOrNull()) {
-                            "playlist" -> uri.getQueryParameter("list")?.let { playlistId ->
-                                val browseId = "VL$playlistId"
+                        val title = if (uri.scheme == "content") {
+                            try {
+                                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                                    if (cursor.moveToFirst()) {
+                                        val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                        if (nameIdx != -1) cursor.getString(nameIdx) else null
+                                    } else null
+                                }
+                            } catch (e: Exception) { null } ?: uri.lastPathSegment ?: "Media File"
+                        } else {
+                            uri.lastPathSegment?.substringBefore("?") ?: "MovieBox Stream"
+                        }
 
-                                if (playlistId.startsWith("OLAK5uy_")) {
-                                    Innertube.playlistPage(browseId = browseId)?.getOrNull()
-                                        ?.let {
-                                            it.songsPage?.items?.firstOrNull()?.album?.endpoint?.browseId?.let { browseId ->
-                                                navController.navigate(
-                                                    route = Routes.Album(id = browseId)
-                                                )
-                                            }
+                        val mimeType = if (uri.scheme == "content") contentResolver.getType(uri) else null
+                        val isVideo = mimeType?.startsWith("video/") == true ||
+                            title.endsWith(".mp4", ignoreCase = true) ||
+                            title.endsWith(".mkv", ignoreCase = true) ||
+                            title.endsWith(".webm", ignoreCase = true) ||
+                            title.endsWith(".mov", ignoreCase = true) ||
+                            title.endsWith(".m3u8", ignoreCase = true)
+
+                        val extras = android.os.Bundle().apply {
+                            putBoolean("forceVideo", isVideo)
+                        }
+
+                        val mediaItem = androidx.media3.common.MediaItem.Builder()
+                            .setUri(uri)
+                            .setMediaId(uri.toString())
+                            .setMediaMetadata(
+                                androidx.media3.common.MediaMetadata.Builder()
+                                    .setTitle(title)
+                                    .setArtist(if (isDirectStream) "MovieBox Stream" else "Local Media")
+                                    .setExtras(extras)
+                                    .build()
+                            )
+                            .build()
+
+                        val currentBinder = snapshotFlow { binder }.filterNotNull().first()
+                        android.util.Log.i("[INTENT-MEDIA]", "Loading mediaItem: id=${mediaItem.mediaId}, title=$title, isVideo=$isVideo")
+                        currentBinder.hybridPlaybackEngine.loadMediaItem(mediaItem, 0L, autoPlay = true)
+                        scope.launch {
+                            playerState.partialExpand()
+                        }
+                        if (isVideo) {
+                            scope.launch {
+                                kotlinx.coroutines.delay(100)
+                                var retryCount = 0
+                                while (retryCount < 5) {
+                                    try {
+                                        android.util.Log.i("[INTENT-MEDIA]", "Navigating to Routes.FullscreenPlayer (attempt ${retryCount + 1})")
+                                        navController.navigate(Routes.FullscreenPlayer) {
+                                            launchSingleTop = true
+                                            restoreState = true
                                         }
-                                } else navController.navigate(
-                                    route = Routes.Playlist(id = browseId)
-                                )
-                            }
-
-                            "channel", "c" -> uri.lastPathSegment?.let { channelId ->
-                                navController.navigate(
-                                    route = Routes.Artist(id = channelId)
-                                )
-                            }
-
-                            else -> when {
-                                path == "watch" -> uri.getQueryParameter("v")
-                                uri.host == "youtu.be" -> path
-                                else -> null
-                            }?.let { videoId ->
-                                Innertube.song(videoId)?.getOrNull()?.let { song ->
-                                    val binder = snapshotFlow { binder }.filterNotNull().first()
-                                    withContext(Dispatchers.Main) {
-                                        binder.player.forcePlay(song.asMediaItem)
+                                        android.util.Log.i("[INTENT-MEDIA]", "Successfully navigated to FullscreenPlayer!")
+                                        break
+                                    } catch (e: Exception) {
+                                        retryCount++
+                                        android.util.Log.e("[INTENT-MEDIA]", "Navigation to FullscreenPlayer failed, retrying ($retryCount/5)", e)
+                                        kotlinx.coroutines.delay(300)
                                     }
                                 }
+                            }
+                        }
+                        data = null
+                        return@LaunchedEffect
+                    }
+
+                    when (val path = uri.pathSegments.firstOrNull()) {
+                        "playlist" -> uri.getQueryParameter("list")?.let { playlistId ->
+                            val browseId = "VL$playlistId"
+
+                            if (playlistId.startsWith("OLAK5uy_")) {
+                                val page = withContext(Dispatchers.IO) {
+                                    Innertube.playlistPage(browseId = browseId)?.getOrNull()
+                                }
+                                page?.songsPage?.items?.firstOrNull()?.album?.endpoint?.browseId?.let { albumId ->
+                                    navController.navigate(route = Routes.Album(id = albumId))
+                                }
+                            } else navController.navigate(route = Routes.Playlist(id = browseId))
+                        }
+
+                        "channel", "c" -> uri.lastPathSegment?.let { channelId ->
+                            navController.navigate(route = Routes.Artist(id = channelId))
+                        }
+
+                        else -> when {
+                            path == "watch" -> uri.getQueryParameter("v")
+                            uri.host == "youtu.be" -> path
+                            else -> null
+                        }?.let { videoId ->
+                            val song = withContext(Dispatchers.IO) {
+                                Innertube.song(videoId)?.getOrNull()
+                            }
+                            song?.let {
+                                val currentBinder = snapshotFlow { binder }.filterNotNull().first()
+                                currentBinder.player.forcePlay(it.asMediaItem)
+                                scope.launch { playerState.partialExpand() }
                             }
                         }
                     }
@@ -634,12 +714,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        data = intent.data ?: intent.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
+        setIntent(intent)
+        data = intent.data 
+            ?: (if ((intent.clipData?.itemCount ?: 0) > 0) intent.clipData?.getItemAt(0)?.uri else null)
+            ?: intent.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
+        android.util.Log.i("[INTENT-MEDIA]", "onNewIntent action=${intent.action}, data=$data, clipData=${intent.clipData}")
     }
 
-    override fun onStop() {
+    override fun onDestroy() {
         unbindService(serviceConnection)
-        super.onStop()
+        super.onDestroy()
     }
 }
 

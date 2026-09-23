@@ -129,7 +129,7 @@ fun Controls(
         )
 
         if (duration != C.TIME_UNSET) {
-            Spacer(modifier = Modifier.height(16.dp)) 
+            Spacer(modifier = Modifier.height(10.dp)) 
         }
 
         // Using enhanced Neumorphic SeekBar (Minimalist Track Look)
@@ -163,7 +163,7 @@ fun Controls(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         // Time display with neumorphic colors
         Row(
@@ -190,7 +190,7 @@ fun Controls(
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         // Neumorphic control buttons
         Row(
@@ -296,6 +296,6 @@ fun Controls(
             )
         }
 
-        Spacer(modifier = Modifier.weight(0.5f)) // Reduced from 1f
+        Spacer(modifier = Modifier.height(4.dp)) // Reduced from 1f
     }
 }

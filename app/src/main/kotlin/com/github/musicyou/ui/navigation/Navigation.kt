@@ -288,8 +288,13 @@ fun Navigation(
         playerComposable(route = Routes.Onboarding::class) {
             OnboardingScreen(
                 onComplete = {
-                    navController.navigate(route = Routes.Home) {
-                        popUpTo(Routes.Onboarding) { inclusive = true }
+                    val currentRoute = navController.currentDestination?.route
+                    if (currentRoute == null || currentRoute.contains("Onboarding")) {
+                        navController.navigate(route = Routes.Home) {
+                            popUpTo(Routes.Onboarding) { inclusive = true }
+                        }
+                    } else {
+                        navController.popBackStack(Routes.Onboarding, inclusive = true)
                     }
                 }
             )

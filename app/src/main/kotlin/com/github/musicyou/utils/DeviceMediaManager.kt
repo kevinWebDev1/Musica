@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import com.github.musicyou.models.Song
 
 object DeviceMediaManager {
@@ -47,6 +48,7 @@ object DeviceMediaManager {
                     val albumId = cursor.getLong(albumIdColumn)
 
                     val contentUri = ContentUris.withAppendedId(audioCollection, id)
+
                     val artworkUri = ContentUris.withAppendedId(
                         Uri.parse("content://media/external/audio/albumart"),
                         albumId
@@ -193,8 +195,11 @@ object DeviceMediaManager {
                                        targetNormalized.contains(displayNorm)
                 
                 if (isExactMatch || isContainsMatch) {
-                   android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND ($type)! ID=$id, Title='$title', Display='$displayName'")
-                   return ContentUris.withAppendedId(uriPrefix, id)
+                   val candidateUri = ContentUris.withAppendedId(uriPrefix, id)
+                   if (context.isMediaUriAccessible(candidateUri.toString())) {
+                       Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND ($type)! ID=$id, Title='$title', Display='$displayName'")
+                       return candidateUri
+                   }
                 }
                 
                 // Level 3: Word overlap (for renamed files, since duration already matches)
@@ -219,8 +224,11 @@ object DeviceMediaManager {
                 android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: Best word-overlap match - ID=${bestMatch!!.first}, ratio=$overlapRatio (${bestMatch!!.second}/${targetWords.size})")
                 // Since duration already matches (±1s), even a single meaningful word overlap is enough
                 if (overlapRatio >= 0.5f || bestMatch!!.second >= 2) {
-                    android.util.Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND via word overlap ($type)! ID=${bestMatch!!.first}")
-                    return ContentUris.withAppendedId(uriPrefix, bestMatch!!.first)
+                    val candidateUri = ContentUris.withAppendedId(uriPrefix, bestMatch!!.first)
+                    if (context.isMediaUriAccessible(candidateUri.toString())) {
+                        Log.d("MusicSyncFlow", "DeviceMediaManager: MATCH FOUND via word overlap ($type)! ID=${bestMatch!!.first}")
+                        return candidateUri
+                    }
                 }
             }
             

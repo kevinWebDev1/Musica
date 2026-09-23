@@ -1,13 +1,18 @@
 package com.github.musicyou.sync.playback
 
 import android.content.Context
+import android.net.Uri
+import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.github.innertube.Innertube
 import com.github.innertube.requests.song
 import com.github.musicyou.Database
+import com.github.musicyou.R
 import com.github.musicyou.utils.asMediaItem
+import com.github.musicyou.utils.isMediaUriAccessible
+import com.github.musicyou.utils.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -93,23 +98,28 @@ class ExoPlayerPlaybackEngine(
         scope.launch {
             var validMetadataItem: MediaItem? = null
             
-            // 1. Resolve Metadata (Always try to get rich metadata)
-            // Check Database first
-            val dbSong = Database.song(mediaId).firstOrNull()
-            if (dbSong != null) {
-                 android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in DB for $mediaId - ${dbSong.title}")
-                 validMetadataItem = dbSong.asMediaItem
+            // Skip database/network metadata lookups for local files
+            if (mediaId.startsWith("content://") || mediaId.startsWith("file://")) {
+                android.util.Log.d("MusicSyncFlow", "ExoEngine: Skipping metadata lookup for local file: $mediaId")
             } else {
-                // Fallback to Innertube API
-                try {
-                    val result = Innertube.song(mediaId)
-                    val songItem = result?.getOrNull()
-                    if (songItem != null) {
-                        android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in Innertube for $mediaId - ${songItem.info?.name}")
-                        validMetadataItem = songItem.asMediaItem
+                // 1. Resolve Metadata (Always try to get rich metadata)
+                // Check Database first
+                val dbSong = Database.song(mediaId).firstOrNull()
+                if (dbSong != null) {
+                     android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in DB for $mediaId - ${dbSong.title}")
+                     validMetadataItem = dbSong.asMediaItem
+                } else {
+                    // Fallback to Innertube API
+                    try {
+                        val result = Innertube.song(mediaId)
+                        val songItem = result?.getOrNull()
+                        if (songItem != null) {
+                            android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in Innertube for $mediaId - ${songItem.info?.name}")
+                            validMetadataItem = songItem.asMediaItem
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("MusicSyncFlow", "ExoEngine: Failed to fetch metadata from Innertube", e)
                     }
-                } catch (e: Exception) {
-                    android.util.Log.w("MusicSyncFlow", "ExoEngine: Innertube lookup failed: ${e.message}")
                 }
             }
 
@@ -158,9 +168,26 @@ class ExoPlayerPlaybackEngine(
 
     override fun loadMediaItem(mediaItem: MediaItem, seekPositionMs: Long, autoPlay: Boolean) {
         android.util.Log.d("MusicSyncFlow", "loadMediaItem: Loading ${mediaItem.mediaId}, seekTo=$seekPositionMs, autoPlay=$autoPlay")
-        val safeItem = if (mediaItem.localConfiguration == null) {
-            val uriString = mediaItem.mediaId
-            if (uriString.startsWith("content://") || uriString.startsWith("file://") || uriString.startsWith("http://") || uriString.startsWith("https://")) {
+        val uriString = mediaItem.mediaId
+        
+        val isDummy = uriString.startsWith("dummy-local-file:")
+        
+        val safeItem = if (isDummy) {
+            mediaItem.buildUpon().setUri(android.net.Uri.parse("file:///android_asset/dummy_sync_item")).build()
+        } else if (mediaItem.localConfiguration == null) {
+            if (uriString.startsWith("content://") || uriString.startsWith("file://")) {
+                if (!context.isMediaUriAccessible(uriString)) {
+                    android.util.Log.w("MusicSyncFlow", "ExoEngine: Local file missing/inaccessible: $uriString")
+                    runOnMain {
+                        context.toast(context.getString(com.github.musicyou.R.string.video_source_deleted_error))
+                    }
+                    return
+                }
+                mediaItem.buildUpon()
+                    .setUri(android.net.Uri.parse(uriString))
+                    .setCustomCacheKey(uriString)
+                    .build()
+            } else if (uriString.startsWith("http://") || uriString.startsWith("https://")) {
                 mediaItem.buildUpon()
                     .setUri(android.net.Uri.parse(uriString))
                     .setCustomCacheKey(uriString)
@@ -175,20 +202,32 @@ class ExoPlayerPlaybackEngine(
 
         runOnMain {
             player.setMediaItem(safeItem)
-            player.prepare()
-            if (seekPositionMs > 0) {
-                android.util.Log.d("MusicSyncFlow", "loadMediaItem: Seeking to $seekPositionMs ms")
-                player.seekTo(seekPositionMs)
-            }
-            if (autoPlay) {
-                android.util.Log.d("MusicSyncFlow", "loadMediaItem: Starting playback")
-                player.play()
+            
+            if (!isDummy) {
+                player.prepare()
+                if (seekPositionMs > 0) {
+                    android.util.Log.d("MusicSyncFlow", "loadMediaItem: Seeking to $seekPositionMs ms")
+                    player.seekTo(seekPositionMs)
+                }
+                if (autoPlay) {
+                    android.util.Log.d("MusicSyncFlow", "loadMediaItem: Starting playback")
+                    player.play()
+                }
+            } else {
+                android.util.Log.d("MusicSyncFlow", "loadMediaItem: Skipping prepare() for dummy item")
             }
         }
     }
 
     override fun play() {
-        runOnMain { player.play() }
+        runOnMain {
+            // CRITICAL FIX: If the player silently fell into IDLE (e.g., from a network error)
+            // or ENDED, it won't respond to just play(). We must prepare() it first.
+            if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
+                player.prepare()
+            }
+            player.play()
+        }
     }
 
     override fun pause() {

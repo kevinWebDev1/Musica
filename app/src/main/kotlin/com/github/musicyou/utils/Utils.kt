@@ -1,5 +1,6 @@
 package com.github.musicyou.utils
 
+import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.text.format.DateUtils
@@ -136,6 +137,7 @@ fun String?.thumbnail(size: Int): String? {
 }
 
 fun Uri?.thumbnail(size: Int): Uri? {
+    if (this == null) return null
     return toString().thumbnail(size)?.toUri()
 }
 
@@ -170,3 +172,16 @@ inline val isAtLeastAndroid12
 
 inline val isAtLeastAndroid13
     get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+fun Context.isMediaUriAccessible(uriString: String?): Boolean {
+    if (uriString == null) return false
+    if (!uriString.startsWith("content://") && !uriString.startsWith("file://")) {
+        return true
+    }
+    return try {
+        val uri = uriString.toUri()
+        contentResolver.openAssetFileDescriptor(uri, "r")?.use { } != null
+    } catch (_: Exception) {
+        false
+    }
+}

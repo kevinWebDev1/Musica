@@ -59,6 +59,9 @@ data class SessionState(
     // DEBUG: URI of the locally matched file (Not synced, local only)
     val localMatchUri: String? = null,
     
+    // First-class Local Override state (deliberate manual selection)
+    val localOverride: com.github.musicyou.sync.data.model.LocalOverrideState? = null,
+    
     // UI: Flag to indicate manual match is required
     val isPendingManualMatch: Boolean = false,
     

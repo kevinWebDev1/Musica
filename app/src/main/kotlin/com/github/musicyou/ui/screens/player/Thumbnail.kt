@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import com.github.musicyou.ui.styling.neumorphicBasin
 import androidx.compose.ui.res.painterResource
 import com.github.musicyou.R
 import androidx.media3.common.MediaItem
@@ -165,17 +166,28 @@ fun Thumbnail(
         label = "thumbnail"
     ) { currentWindow ->
         val thumbnailContent: @Composable BoxScope.() -> Unit = @Composable {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                val size = minOf(maxWidth, maxHeight)
                 val height = animateDpAsState(
-                    targetValue = if (fullScreenLyrics) maxHeight else thumbnailSizeDp
+                    targetValue = if (fullScreenLyrics) maxHeight else size
                 )
+                val width = if (fullScreenLyrics) maxWidth else size
 
                 Box(
                     modifier = Modifier
-                        .width(thumbnailSizeDp)
+                        .width(width)
                         .height(height.value)
+                        .neumorphicBasin(cornerRadius = 32.dp)
+                        .padding(12.dp)
                 ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(24.dp))
+                    ) {
                         // Fast-loading low-quality fallback (from cache)
                         AsyncImage(
                             model = currentWindow.mediaItem.mediaMetadata.artworkUri.thumbnail(
