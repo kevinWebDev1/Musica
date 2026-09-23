@@ -49,7 +49,7 @@ class SessionManager(
         private const val SYNC_ECHO_SUPPRESS_MS = 3000L 
         private const val SYNC_LEAD_TIME_MS = 0L       // 4s lead for snapshot scheduling
         private const val PARTICIPANT_LEAD_TIME_MS = 400L // 400ms participant lead vs host (Balance between sync tightness and lag buffer)
-        private const val DRIFT_THRESHOLD_MS = 300L      // 300ms drift threshold for snap-to-sync
+        private const val DRIFT_THRESHOLD_MS = 1500L      // 1500ms drift threshold for snap-to-sync (absorbs network buffer latency to prevent sync death loops)
         private const val DRIFT_CHECK_INTERVAL_MS = 2000L // 2s check interval for responsive drift detection
         private const val DEBOUNCE_MS = 300L
         
@@ -58,7 +58,7 @@ class SessionManager(
         
         // FIX 3: Event deduplication thresholds
         private const val DEDUP_THRESHOLD_MS = 200L
-        private const val POSITION_DRIFT_THRESHOLD_MS = 300L
+        private const val POSITION_DRIFT_THRESHOLD_MS = 1500L
         
         // FIX 5: Host-side coalescing window
         private const val COALESCE_WINDOW_MS = 200L
@@ -137,6 +137,7 @@ class SessionManager(
     private var lastAppliedStatus: SessionState.Status? = null
     private var lastAppliedPosition: Long = 0L
     private var lastAppliedTimestamp: Long = 0L
+    private var lastSeekTimestamp: Long = 0L
     
     // Deduplication cache for social events to prevent echo
     private val processedSocialEvents = java.util.Collections.newSetFromMap(
@@ -939,6 +940,7 @@ class SessionManager(
             if (isFirstJoin) {
                 Log.i(TAG, "initiateSeamlessSync: First join - seeking host to 0")
                 playbackEngine.seekTo(0)
+                lastSeekTimestamp = System.currentTimeMillis()
             }
             
             playbackEngine.play()
@@ -946,6 +948,7 @@ class SessionManager(
              // Even if already playing (unlikely given logic above), seek to 0 if first join
              Log.i(TAG, "initiateSeamlessSync: First join (wasPlaying=$wasPlaying) - seeking host to 0")
              playbackEngine.seekTo(0)
+             lastSeekTimestamp = System.currentTimeMillis()
         }
 
         // Update message for UX
@@ -1031,9 +1034,14 @@ class SessionManager(
                         
                         val hasOverride = state.localOverride != null
                         val isDeliberateOverride = hasOverride && state.localOverride.isDeliberateMismatch
-                        // FIX: Aggressively enforce 300ms drift for all streams (including YouTube) so it auto-fixes fast.
-                        // Only deliberate local overrides (which might be totally different videos) get a relaxed 1500ms threshold to prevent stuttering.
-                        val thresholdMs = if (isDeliberateOverride) 1500L else DRIFT_THRESHOLD_MS
+                        
+                        // FIX: Sync Death Loop Protection. If we just seeked, the player needs time to buffer.
+                        // We relax the threshold to 3000ms for 5 seconds after a seek to let it stabilize, then tighten back to 300ms.
+                        val timeSinceLastSeek = System.currentTimeMillis() - lastSeekTimestamp
+                        val isCoolingDown = timeSinceLastSeek < 5000L
+                        
+                        val baseThreshold = if (isDeliberateOverride) 1500L else DRIFT_THRESHOLD_MS
+                        val thresholdMs = if (isCoolingDown && !isDeliberateOverride) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
                         
                         val drift = kotlin.math.abs(actualPos - expectedPos)
                         val isWrongTrack = !hasOverride && currentMediaId != null && state.currentMediaId != null && state.currentMediaId != currentMediaId
@@ -1271,7 +1279,7 @@ class SessionManager(
             
             if (isHost) {
                 playbackEngine.seekTo(positionMs)
-
+                lastSeekTimestamp = System.currentTimeMillis()
                 // Auto-resume playback after seek for better UX
                 val wasPlaying = _sessionState.value.playbackStatus == SessionState.Status.PLAYING
                 if (!wasPlaying) {
@@ -2190,8 +2198,13 @@ class SessionManager(
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
             val isOverridden = _sessionState.value.localOverride?.isDeliberateMismatch == true
-            // FIX: Aggressively enforce 300ms drift for all streams. Deliberate overrides get 1500ms.
-            val thresholdMs = if (isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
+            
+            // FIX: Sync Death Loop Protection
+            val timeSinceLastSeek = System.currentTimeMillis() - lastSeekTimestamp
+            val isCoolingDown = timeSinceLastSeek < 5000L
+            val baseThreshold = if (isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
+            val thresholdMs = if (isCoolingDown && !isOverridden) kotlin.math.max(baseThreshold, 3000L) else baseThreshold
+            
             val needsSeek = positionDrift > thresholdMs
             
             when (state.playbackStatus) {
@@ -2205,6 +2218,7 @@ class SessionManager(
                             )
                             Log.w(TAG, "[DriftTracker] Action: Correcting drift | Reason: Drift (${positionDrift}ms) > Threshold (${thresholdMs}ms). Seeking to $correctPos")
                             playbackEngine.seekTo(correctPos)
+                            lastSeekTimestamp = System.currentTimeMillis()
                         } else if (positionDrift > 50L) {
                             Log.v(TAG, "[DriftTracker] Status: In-Sync | Reason: Drift (${positionDrift}ms) is < Threshold (${thresholdMs}ms). Not seeking.")
                         }
@@ -2222,6 +2236,7 @@ class SessionManager(
                         // HOST logic...
                         if (needsSeek) {
                             playbackEngine.seekTo(targetPos)
+                            lastSeekTimestamp = System.currentTimeMillis()
                         }
                         if (!currentIsPlaying) {
                             playbackEngine.play()
@@ -2234,6 +2249,7 @@ class SessionManager(
                     if (needsSeek) {
                         Log.w(TAG, "[DriftTracker] Action: Correcting drift (Paused) | Reason: Drift (${positionDrift}ms) > Threshold (${thresholdMs}ms). Seeking to $targetPos")
                         playbackEngine.seekTo(targetPos)
+                        lastSeekTimestamp = System.currentTimeMillis()
                     }
                 }
                 else -> {
@@ -2274,6 +2290,7 @@ class SessionManager(
                         if (!isHost) {
                             Log.d("MusicSyncFlow", "applySnapshot: Scheduled Seek to $startPos")
                             playbackEngine.seekTo(startPos)
+                            lastSeekTimestamp = System.currentTimeMillis()
                         }
                         playbackEngine.play()
                     }
@@ -2284,6 +2301,7 @@ class SessionManager(
                     } else {
                         playbackEngine.loadTrack(mediaId, targetPos, shouldAutoPlay, customUri = resolvedUri)
                     }
+                    lastSeekTimestamp = System.currentTimeMillis()
                 }
             }
         }
