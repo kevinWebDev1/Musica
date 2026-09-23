@@ -1038,15 +1038,17 @@ class SessionManager(
                         val drift = kotlin.math.abs(actualPos - expectedPos)
                         val isWrongTrack = !hasOverride && currentMediaId != null && state.currentMediaId != null && state.currentMediaId != currentMediaId
                         
-                        android.util.Log.d("SyncBug", "DriftMonitor check: isWrongTrack=$isWrongTrack, hasOverride=$hasOverride, drift=${drift}ms")
-                        
-                        if (isWrongTrack || drift > thresholdMs) {
-                            if (isWrongTrack) lastSyncedMediaId = null
-                            android.util.Log.d("SyncBug", "DriftMonitor forcing snap-back! (isWrongTrack=$isWrongTrack, drift=$drift > threshold=$thresholdMs)")
-                            Log.w(TAG, "DRIFT MONITOR: Sync issue detected! WrongTrack=$isWrongTrack, drift=${drift}ms. Resyncing...")
+                        // [DriftTracker] Smart logging to avoid spam while keeping high visibility for real issues
+                        if (isWrongTrack) {
+                            Log.w(TAG, "[DriftTracker] Action: Snap-back triggered | Reason: Wrong track detected (Host: ${state.currentMediaId}, Local: $currentMediaId)")
+                            lastSyncedMediaId = null
                             applyAuthoritativeSnapshot(state, "DriftMonitor")
-                        } else {
-                            Log.v(TAG, "DRIFT MONITOR: Track and drift within limits (${drift}ms)")
+                        } else if (drift > thresholdMs) {
+                            Log.w(TAG, "[DriftTracker] Action: Snap-back triggered | Reason: Drift of ${drift}ms exceeds threshold of ${thresholdMs}ms")
+                            applyAuthoritativeSnapshot(state, "DriftMonitor")
+                        } else if (drift > 50L) {
+                            // Only log if drift is slightly noticeable (>50ms) to prevent absolute zero-drift log flooding
+                            Log.v(TAG, "[DriftTracker] Status: Monitoring minor drift | Drift: ${drift}ms (Safe limit: ${thresholdMs}ms)")
                         }
                     }
                 }
@@ -1980,7 +1982,7 @@ class SessionManager(
                         state.playbackSpeed == currentSpeed &&  // Check speed to detect speed changes
                         positionDrift < DRIFT_THRESHOLD_MS && 
                         (System.currentTimeMillis() - lastAppliedTimestamp) < DEDUP_THRESHOLD_MS) {
-                        Log.d("MusicSyncFlow", "applySnapshot: IGNORED (dedup/drift limits)")
+                        Log.v(TAG, "[DriftTracker] Action: Snapshot Ignored | Reason: Drift (${positionDrift}ms) is within safe dedup limit (<${DRIFT_THRESHOLD_MS}ms) and no status change")
                         return@withLock
                     }
                     
@@ -2191,7 +2193,6 @@ class SessionManager(
             // FIX: Aggressively enforce 300ms drift for all streams. Deliberate overrides get 1500ms.
             val thresholdMs = if (isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
             val needsSeek = positionDrift > thresholdMs
-            Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs, isOverridden=$isOverridden)")
             
             when (state.playbackStatus) {
                 SessionState.Status.PLAYING -> {
@@ -2202,14 +2203,14 @@ class SessionManager(
                                 anchorTime = state.trackStartGlobalTime,
                                 speed = effectiveSpeed
                             )
-                            Log.d("MusicSyncFlow", "applySnapshot: SEEKING guest to $correctPos (Reason: Drift $positionDrift > $thresholdMs)")
+                            Log.w(TAG, "[DriftTracker] Action: Correcting drift | Reason: Drift (${positionDrift}ms) > Threshold (${thresholdMs}ms). Seeking to $correctPos")
                             playbackEngine.seekTo(correctPos)
-                        } else {
-                            Log.d("MusicSyncFlow", "applySnapshot: Ignoring small drift (Drift $positionDrift < $thresholdMs). Keeping current pos.")
+                        } else if (positionDrift > 50L) {
+                            Log.v(TAG, "[DriftTracker] Status: In-Sync | Reason: Drift (${positionDrift}ms) is < Threshold (${thresholdMs}ms). Not seeking.")
                         }
                         
                         if (!currentIsPlaying) {
-                             Log.d("MusicSyncFlow", "applySnapshot: Starting playback (was paused)")
+                             Log.d(TAG, "[DriftTracker] Action: Resuming playback | Reason: Host is PLAYING but Local was PAUSED")
                              playbackEngine.play()
                         }
                         
@@ -2228,10 +2229,10 @@ class SessionManager(
                     }
                 }
                 SessionState.Status.PAUSED -> {
-                    Log.d("MusicSyncFlow", "applySnapshot: State PAUSED - Pausing engine")
+                    Log.d(TAG, "[DriftTracker] Action: Pausing playback | Reason: Host is PAUSED")
                     playbackEngine.pause()
                     if (needsSeek) {
-                        Log.d("MusicSyncFlow", "applySnapshot: SEEKING paused guest to $targetPos")
+                        Log.w(TAG, "[DriftTracker] Action: Correcting drift (Paused) | Reason: Drift (${positionDrift}ms) > Threshold (${thresholdMs}ms). Seeking to $targetPos")
                         playbackEngine.seekTo(targetPos)
                     }
                 }
