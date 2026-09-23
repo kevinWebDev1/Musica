@@ -1030,8 +1030,10 @@ class SessionManager(
                         val currentMediaId = playbackEngine.playbackState.value.mediaId
                         
                         val hasOverride = state.localOverride != null
-                        val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
-                        val thresholdMs = if (isYouTube || (hasOverride && state.localOverride.isDeliberateMismatch)) 3000L else DRIFT_THRESHOLD_MS
+                        val isDeliberateOverride = hasOverride && state.localOverride.isDeliberateMismatch
+                        // FIX: Aggressively enforce 300ms drift for all streams (including YouTube) so it auto-fixes fast.
+                        // Only deliberate local overrides (which might be totally different videos) get a relaxed 1500ms threshold to prevent stuttering.
+                        val thresholdMs = if (isDeliberateOverride) 1500L else DRIFT_THRESHOLD_MS
                         
                         val drift = kotlin.math.abs(actualPos - expectedPos)
                         val isWrongTrack = !hasOverride && currentMediaId != null && state.currentMediaId != null && state.currentMediaId != currentMediaId
@@ -2033,8 +2035,9 @@ class SessionManager(
                 val finalUrl = if (useExistingMetadata) current.thumbnailUrl else state.thumbnailUrl
 
                 // Local fields that are NOT part of network state must be preserved from 'current'
-                val preserveLocalMatch = current.localOverride != null || 
-                    (current.localMatchUri != null && (current.currentMediaId == state.currentMediaId || lastSyncedMediaId == state.currentMediaId))
+                // FIX: If the host track changes, we MUST clear the local override so the participant isn't stuck on the old manual pick!
+                val isHostTrackUnchanged = (state.currentMediaId == null) || (current.currentMediaId == state.currentMediaId) || (lastSyncedMediaId == state.currentMediaId)
+                val preserveLocalMatch = isHostTrackUnchanged && (current.localOverride != null || current.localMatchUri != null)
 
                 state.copy(
                     isHost = current.isHost,
@@ -2052,9 +2055,9 @@ class SessionManager(
                     artist = finalArtist,
                     thumbnailUrl = finalUrl,
                     localMatchUri = if (preserveLocalMatch) current.localMatchUri else null,
-                    localOverride = current.localOverride,
+                    localOverride = if (preserveLocalMatch) current.localOverride else null,
                     isPendingManualMatch = if (preserveLocalMatch) false else (if (state.isPendingManualMatch) true else current.isPendingManualMatch),
-                    clockSyncMessage = if (current.localOverride != null) "Playing from manually selected file 📂" else (state.clockSyncMessage ?: current.clockSyncMessage)
+                    clockSyncMessage = if (preserveLocalMatch && current.localOverride != null) "Playing from manually selected file 📂" else (state.clockSyncMessage ?: current.clockSyncMessage)
                 )
             }
 
@@ -2184,9 +2187,9 @@ class SessionManager(
 
         if (isSameTrack) {
             // SAME TRACK - just update playback state without reloading
-            val isYouTube = state.currentMediaId?.startsWith("youtube-embed:") == true
             val isOverridden = _sessionState.value.localOverride?.isDeliberateMismatch == true
-            val thresholdMs = if (isYouTube || isOverridden) 3000L else POSITION_DRIFT_THRESHOLD_MS
+            // FIX: Aggressively enforce 300ms drift for all streams. Deliberate overrides get 1500ms.
+            val thresholdMs = if (isOverridden) 1500L else POSITION_DRIFT_THRESHOLD_MS
             val needsSeek = positionDrift > thresholdMs
             Log.d("MusicSyncFlow", "applySnapshot: Same Track - NeedsSeek=$needsSeek (Drift=$positionDrift > $thresholdMs, isOverridden=$isOverridden)")
             
