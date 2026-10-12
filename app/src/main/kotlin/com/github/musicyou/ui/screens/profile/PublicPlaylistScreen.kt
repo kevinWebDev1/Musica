@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,8 +23,11 @@ import com.github.musicyou.R
 import com.github.musicyou.auth.ProfileManager
 import com.github.musicyou.models.ActionInfo
 import com.github.musicyou.ui.components.CoverScaffold
+import com.github.musicyou.ui.components.EmptyPlaceholder
 import com.github.musicyou.ui.components.PlaylistThumbnail
-import com.github.musicyou.ui.items.LocalSongItem
+import com.github.musicyou.ui.items.MediaSongItem
+import com.github.musicyou.ui.styling.*
+import com.github.musicyou.utils.asMediaItem
 import com.github.musicyou.utils.enqueue
 import com.github.musicyou.utils.forcePlayAtIndex
 import com.github.musicyou.utils.forcePlayFromBeginning
@@ -99,7 +103,7 @@ fun PublicPlaylistScreen(
                          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                          horizontalArrangement = Arrangement.SpaceEvenly
                      ) {
-                         Button(
+                         NeumorphicButton(
                              onClick = {
                                  if (songs.isNotEmpty()) {
                                      binder?.stopRadio()
@@ -108,14 +112,14 @@ fun PublicPlaylistScreen(
                                      )
                                  }
                              },
-                             enabled = songs.isNotEmpty()
-                         ) {
-                             Icon(Icons.Outlined.Shuffle, contentDescription = null)
-                             Spacer(modifier = Modifier.width(8.dp))
-                             Text("Shuffle")
-                         }
+                             icon = Icons.Outlined.Shuffle,
+                             text = "Shuffle",
+                             modifier = Modifier.weight(1f)
+                         )
                          
-                         Button(
+                         Spacer(modifier = Modifier.width(16.dp))
+                         
+                         NeumorphicButton(
                              onClick = {
                                  if (songs.isNotEmpty()) {
                                      binder?.stopRadio()
@@ -124,12 +128,10 @@ fun PublicPlaylistScreen(
                                      )
                                  }
                              },
-                             enabled = songs.isNotEmpty()
-                         ) {
-                             Icon(Icons.AutoMirrored.Outlined.PlaylistPlay, contentDescription = null)
-                             Spacer(modifier = Modifier.width(8.dp))
-                             Text("Play")
-                         }
+                             icon = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                             text = "Play",
+                             modifier = Modifier.weight(1f)
+                         )
                      }
                  }
 
@@ -137,18 +139,23 @@ fun PublicPlaylistScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                 }
 
+                if (songs.isEmpty()) {
+                    item(key = "empty_state") {
+                        EmptyPlaceholder(
+                            icon = Icons.Outlined.MusicNote,
+                            text = "Playlist is empty"
+                        )
+                    }
+                }
+
                 itemsIndexed(
                     items = songs,
                     key = { _, song -> song.mediaId }
                 ) { index, song ->
-                    // Using a simplified Song item representation
-                    ListItem(
-                        headlineContent = { Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = {
-                            Text((index + 1).toString())
-                        },
-                        modifier = Modifier.clickable {
+                    MediaSongItem(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        song = song.asMediaItem(),
+                        onClick = {
                             binder?.stopRadio()
                             binder?.player?.forcePlayAtIndex(
                                 songs.map { it.asMediaItem() },

@@ -29,6 +29,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.firstOrNull
 import com.github.musicyou.Database
 import com.github.musicyou.LocalPlayerServiceBinder
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun SongItem(
@@ -78,6 +87,48 @@ fun SongItem(
 }
 
 @Composable
+fun MediaThumbnailPlaceholder(
+    isVideo: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val gradientBrush = if (isVideo) {
+        Brush.linearGradient(
+            listOf(
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+                MaterialTheme.colorScheme.surfaceVariant
+            )
+        )
+    } else {
+        Brush.linearGradient(
+            listOf(
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                MaterialTheme.colorScheme.surfaceVariant
+            )
+        )
+    }
+    val iconColor = if (isVideo) {
+        MaterialTheme.colorScheme.tertiary
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(MaterialTheme.shapes.medium)
+            .background(gradientBrush),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isVideo) Icons.Filled.Videocam else Icons.Filled.MusicNote,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = iconColor
+        )
+    }
+}
+
+@Composable
 fun LocalSongItem(
     modifier: Modifier = Modifier,
     song: Song,
@@ -101,6 +152,8 @@ fun LocalSongItem(
         }
     }
 
+    val isVideo = song.artistsText == "Video"
+
     ListItemContainer(
         isDownloaded = isDownloaded,
         modifier = modifier,
@@ -110,22 +163,29 @@ fun LocalSongItem(
         onClick = onClick,
         onLongClick = onLongClick,
         thumbnail = { size ->
-            Box {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
                 if (thumbnailContent == null) {
-                    val context = LocalContext.current
-                    val request = coil3.request.ImageRequest.Builder(context)
-                        .data(song.thumbnailUrl?.thumbnail(size.px))
-                        .videoFrameMillis(3000)
-                        .build()
+                    MediaThumbnailPlaceholder(isVideo = isVideo)
 
-                    AsyncImage(
-                        model = request,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(MaterialTheme.shapes.medium)
-                    )
+                    if (!song.thumbnailUrl.isNullOrBlank()) {
+                        val context = LocalContext.current
+                        val request = coil3.request.ImageRequest.Builder(context)
+                            .data(song.thumbnailUrl?.thumbnail(size.px))
+                            .videoFrameMillis(3000)
+                            .build()
+
+                        AsyncImage(
+                            model = request,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(MaterialTheme.shapes.medium)
+                        )
+                    }
 
                     onThumbnailContent?.invoke(this)
                 } else {
@@ -161,6 +221,8 @@ fun MediaSongItem(
         }
     }
 
+    val isVideo = song.mediaMetadata.extras?.getBoolean("forceVideo") == true
+
     ListItemContainer(
         isDownloaded = isDownloaded,
         modifier = modifier,
@@ -175,15 +237,23 @@ fun MediaSongItem(
         onLongClick = onLongClick,
         containerColor = BottomSheetDefaults.ContainerColor,
         thumbnail = { size ->
-            Box {
-                AsyncImage(
-                    model = song.mediaMetadata.artworkUri.thumbnail(size.px),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(MaterialTheme.shapes.medium)
-                )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                MediaThumbnailPlaceholder(isVideo = isVideo)
+
+                val artworkUri = song.mediaMetadata.artworkUri
+                if (artworkUri != null) {
+                    AsyncImage(
+                        model = artworkUri.thumbnail(size.px),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(MaterialTheme.shapes.medium)
+                    )
+                }
 
                 onThumbnailContent?.invoke()
             }

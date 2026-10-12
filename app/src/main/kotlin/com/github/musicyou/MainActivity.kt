@@ -102,6 +102,8 @@ class MainActivity : ComponentActivity() {
 
     private var binder by mutableStateOf<PlayerService.Binder?>(null)
     private var data by mutableStateOf<Uri?>(null)
+    private var streamCookie: String? = null
+    private var streamUserAgent: String? = null
     private lateinit var authManager: AuthManager
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -116,10 +118,18 @@ class MainActivity : ComponentActivity() {
         authManager = AuthManager(this)
 
         val launchedFromNotification = intent?.extras?.getBoolean("expandPlayerBottomSheet") == true
-        data = intent?.data 
-            ?: (if ((intent?.clipData?.itemCount ?: 0) > 0) intent?.clipData?.getItemAt(0)?.uri else null)
-            ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
-        android.util.Log.i("[INTENT-MEDIA]", "onCreate intent action=${intent?.action}, data=$data, clipData=${intent?.clipData}")
+        data = extractUriFromIntent(intent)
+        streamCookie = intent?.getStringExtra("cookie") 
+            ?: intent?.getStringExtra("Cookie")
+            ?: intent?.getStringArrayExtra("headers")?.let { arr ->
+                arr.toList().chunked(2).firstOrNull { it[0].equals("cookie", ignoreCase = true) }?.getOrNull(1)
+            }
+        streamUserAgent = intent?.getStringExtra("userAgent") 
+            ?: intent?.getStringExtra("User-Agent")
+            ?: intent?.getStringArrayExtra("headers")?.let { arr ->
+                arr.toList().chunked(2).firstOrNull { it[0].equals("User-Agent", ignoreCase = true) }?.getOrNull(1)
+            }
+        android.util.Log.i("[INTENT-MEDIA]", "onCreate intent action=${intent?.action}, data=$data, cookie=$streamCookie, userAgent=$streamUserAgent, clipData=${intent?.clipData}")
 
         setContent {
             // Check for updates using the Webstore API
@@ -331,6 +341,7 @@ class MainActivity : ComponentActivity() {
                             var lastVideoId: String? = null
                             var lastIsPlaying: Boolean? = null
                             var lastSeekRequestId: Int = -1
+                            var lastPlaybackSpeed: Float = 1.0f
 
                             engine.playbackState.collect { state ->
                                 val videoId = state.mediaId?.removePrefix("youtube-embed:")
@@ -366,6 +377,22 @@ class MainActivity : ComponentActivity() {
                                         lastIsPlaying = state.isPlaying
                                         android.util.Log.d("YouTubePlayerRetained", "PLAY_PAUSE videoId=$videoId, isPlaying=${state.isPlaying}")
                                         if (state.isPlaying) ytPlayer.play() else ytPlayer.pause()
+                                    }
+                                    if (state.playbackSpeed != lastPlaybackSpeed) {
+                                        lastPlaybackSpeed = state.playbackSpeed
+                                        android.util.Log.d("YouTubePlayerRetained", "SPEED videoId=$videoId, speed=${state.playbackSpeed}")
+                                        
+                                        val rate = when {
+                                            state.playbackSpeed <= 0.25f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_0_25
+                                            state.playbackSpeed <= 0.5f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_0_5
+                                            state.playbackSpeed <= 0.75f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_0_75
+                                            state.playbackSpeed <= 1.0f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_1
+                                            state.playbackSpeed <= 1.25f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_1_25
+                                            state.playbackSpeed <= 1.5f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_1_5
+                                            state.playbackSpeed <= 1.75f -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_1_75
+                                            else -> com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants.PlaybackRate.RATE_2
+                                        }
+                                        ytPlayer.setPlaybackRate(rate)
                                     }
                                 }
                             }
@@ -527,10 +554,14 @@ class MainActivity : ComponentActivity() {
                             val autoExpand = prefs.getBoolean(com.github.musicyou.utils.autoExpandYouTubeVideoKey, true)
                             val isVideo = currentMediaId.startsWith("youtube-embed:") ||
                                     state.mediaItem?.mediaMetadata?.extras?.getBoolean("forceVideo") == true ||
+                                    state.mediaItem?.mediaMetadata?.extras?.getBoolean("isLocal") == true ||
                                     currentMediaId.endsWith(".mp4", ignoreCase = true) ||
                                     currentMediaId.endsWith(".mkv", ignoreCase = true) ||
                                     currentMediaId.endsWith(".webm", ignoreCase = true) ||
-                                    currentMediaId.endsWith(".mov", ignoreCase = true)
+                                    currentMediaId.endsWith(".mov", ignoreCase = true) ||
+                                    currentMediaId.endsWith(".m3u8", ignoreCase = true) ||
+                                    currentMediaId.endsWith(".mpd", ignoreCase = true) ||
+                                    currentMediaId.contains("index_web", ignoreCase = true)
 
                             if (autoExpand && isVideo) {
                                 scope.launch {
@@ -623,10 +654,26 @@ class MainActivity : ComponentActivity() {
                             title.endsWith(".mkv", ignoreCase = true) ||
                             title.endsWith(".webm", ignoreCase = true) ||
                             title.endsWith(".mov", ignoreCase = true) ||
-                            title.endsWith(".m3u8", ignoreCase = true)
+                            title.endsWith(".m3u8", ignoreCase = true) ||
+                            title.endsWith(".mpd", ignoreCase = true) ||
+                            title.contains("index_web", ignoreCase = true) ||
+                            uri.path?.contains("video", ignoreCase = true) == true ||
+                            isDirectStream
 
                         val extras = android.os.Bundle().apply {
                             putBoolean("forceVideo", isVideo)
+                            putBoolean("isLocal", true)
+                            streamCookie?.let { putString("streamCookie", it) }
+                            streamUserAgent?.let { putString("streamUserAgent", it) }
+                        }
+
+                        val currentBinder = snapshotFlow { binder }.filterNotNull().first()
+                        if (!currentBinder.sessionManager.sessionState.value.isHost && currentBinder.sessionManager.sessionState.value.hostOnlyMode) {
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(this@MainActivity, "Host Mode is ON. You cannot change the track.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            data = null
+                            return@LaunchedEffect
                         }
 
                         val mediaItem = androidx.media3.common.MediaItem.Builder()
@@ -641,9 +688,10 @@ class MainActivity : ComponentActivity() {
                             )
                             .build()
 
-                        val currentBinder = snapshotFlow { binder }.filterNotNull().first()
-                        android.util.Log.i("[INTENT-MEDIA]", "Loading mediaItem: id=${mediaItem.mediaId}, title=$title, isVideo=$isVideo")
-                        currentBinder.hybridPlaybackEngine.loadMediaItem(mediaItem, 0L, autoPlay = true)
+                        com.github.musicyou.service.PlayerService.currentStreamCookie = streamCookie
+                        com.github.musicyou.service.PlayerService.currentStreamUserAgent = streamUserAgent
+                        android.util.Log.i("[INTENT-MEDIA]", "Loading mediaItem: id=${mediaItem.mediaId}, title=$title, isVideo=$isVideo, cookie=$streamCookie, userAgent=$streamUserAgent")
+                        currentBinder.syncLoadMediaItem(mediaItem, 0L, autoPlay = true)
                         scope.launch {
                             playerState.partialExpand()
                         }
@@ -695,12 +743,29 @@ class MainActivity : ComponentActivity() {
                             uri.host == "youtu.be" -> path
                             else -> null
                         }?.let { videoId ->
+                            val currentBinder = snapshotFlow { binder }.filterNotNull().first()
+                            if (!currentBinder.sessionManager.sessionState.value.isHost && currentBinder.sessionManager.sessionState.value.hostOnlyMode) {
+                                withContext(Dispatchers.Main) {
+                                    android.widget.Toast.makeText(this@MainActivity, "Host Mode is ON. You cannot change the track.", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                                return@LaunchedEffect
+                            }
+
                             val song = withContext(Dispatchers.IO) {
                                 Innertube.song(videoId)?.getOrNull()
                             }
                             song?.let {
-                                val currentBinder = snapshotFlow { binder }.filterNotNull().first()
-                                currentBinder.player.forcePlay(it.asMediaItem)
+                                val baseMediaItem = it.asMediaItem
+                                val mediaItemWithVideo = baseMediaItem.buildUpon()
+                                    .setMediaId("youtube-video:$videoId")
+                                    .setMediaMetadata(
+                                        baseMediaItem.mediaMetadata.buildUpon()
+                                            .setExtras((baseMediaItem.mediaMetadata.extras ?: android.os.Bundle()).apply { putBoolean("forceVideo", true) })
+                                            .build()
+                                    )
+                                    .build()
+                                    
+                                currentBinder.player.forcePlay(mediaItemWithVideo)
                                 scope.launch { playerState.partialExpand() }
                             }
                         }
@@ -715,10 +780,37 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        data = intent.data 
-            ?: (if ((intent.clipData?.itemCount ?: 0) > 0) intent.clipData?.getItemAt(0)?.uri else null)
-            ?: intent.getStringExtra(Intent.EXTRA_TEXT)?.toUri()
-        android.util.Log.i("[INTENT-MEDIA]", "onNewIntent action=${intent.action}, data=$data, clipData=${intent.clipData}")
+        data = extractUriFromIntent(intent)
+        streamCookie = intent.getStringExtra("cookie") 
+            ?: intent.getStringExtra("Cookie")
+            ?: intent.getStringArrayExtra("headers")?.let { arr ->
+                arr.toList().chunked(2).firstOrNull { it[0].equals("cookie", ignoreCase = true) }?.getOrNull(1)
+            }
+        streamUserAgent = intent.getStringExtra("userAgent") 
+            ?: intent.getStringExtra("User-Agent")
+            ?: intent.getStringArrayExtra("headers")?.let { arr ->
+                arr.toList().chunked(2).firstOrNull { it[0].equals("User-Agent", ignoreCase = true) }?.getOrNull(1)
+            }
+        android.util.Log.i("[INTENT-MEDIA]", "onNewIntent action=${intent.action}, data=$data, cookie=$streamCookie, userAgent=$streamUserAgent, clipData=${intent.clipData}")
+    }
+
+    private fun extractUriFromIntent(intent: Intent?): Uri? {
+        if (intent == null) return null
+        intent.data?.let { return it }
+        if ((intent.clipData?.itemCount ?: 0) > 0) {
+            intent.clipData?.getItemAt(0)?.uri?.let { return it }
+        }
+        val extraStream = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+        }
+        if (extraStream != null) return extraStream
+
+        return intent.getStringExtra(Intent.EXTRA_TEXT)?.let {
+            try { it.toUri() } catch (e: Exception) { null }
+        }
     }
 
     override fun onDestroy() {

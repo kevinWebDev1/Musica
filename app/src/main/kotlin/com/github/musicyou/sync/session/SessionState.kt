@@ -62,11 +62,19 @@ data class SessionState(
     // First-class Local Override state (deliberate manual selection)
     val localOverride: com.github.musicyou.sync.data.model.LocalOverrideState? = null,
     
+    // External stream properties (e.g. MovieBox)
+    val streamCookie: String? = null,
+    val streamUserAgent: String? = null,
+    val isDirectStream: Boolean = false,
+    
     // UI: Flag to indicate manual match is required
     val isPendingManualMatch: Boolean = false,
     
     // NETWORK: Current Ping/RTT in milliseconds (Local only overlay)
-    val ping: Long? = null
+    val ping: Long? = null,
+    
+    // SYNC: Current positional drift in milliseconds (Local only overlay)
+    val drift: Long? = null
 ) {
     enum class Status { PLAYING, PAUSED }
     

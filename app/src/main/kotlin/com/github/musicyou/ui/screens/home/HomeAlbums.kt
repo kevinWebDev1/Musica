@@ -16,11 +16,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Album
 import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.R
 import com.github.musicyou.enums.AlbumSortBy
 import com.github.musicyou.enums.SortOrder
 import com.github.musicyou.models.Album
+import com.github.musicyou.ui.components.EmptyPlaceholder
 import com.github.musicyou.ui.components.HomeScaffold
 import com.github.musicyou.ui.components.SortingHeader
 import com.github.musicyou.ui.items.LocalAlbumItem
@@ -82,6 +85,18 @@ fun HomeAlbums(
                     size = viewModel.items.size,
                     itemCountText = R.plurals.number_of_albums
                 )
+            }
+
+            if (viewModel.items.isEmpty()) {
+                item(
+                    key = "empty_state",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    EmptyPlaceholder(
+                        icon = Icons.Outlined.Album,
+                        text = "No albums found"
+                    )
+                }
             }
 
             items(

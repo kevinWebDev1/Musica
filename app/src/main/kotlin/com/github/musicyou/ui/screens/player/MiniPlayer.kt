@@ -74,6 +74,8 @@ fun MiniPlayer(
     val nullableMediaItem = hybridPlaybackState.mediaItem ?: binder.player.currentMediaItem
     val shouldBePlaying = hybridPlaybackState.isPlaying
     val isYouTube = nullableMediaItem?.mediaId?.startsWith("youtube-embed:") == true
+    val isBuffering = hybridPlaybackState.playbackState == com.github.musicyou.sync.playback.PlaybackState.STATE_BUFFERING ||
+        (!isYouTube && binder.player.playbackState == androidx.media3.common.Player.STATE_BUFFERING)
 
     val mediaItem = nullableMediaItem ?: return
     
@@ -150,13 +152,21 @@ fun MiniPlayer(
                                 else binder.syncPlay()
                             }
                         ) {
-                            Icon(
-                                imageVector =
-                                    if (shouldBePlaying) Icons.Outlined.Pause
-                                    else if (binder.player.playbackState == Player.STATE_ENDED) Icons.Outlined.Replay
-                                    else Icons.Outlined.PlayArrow,
-                                contentDescription = null,
-                            )
+                            if (isBuffering) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            } else {
+                                Icon(
+                                    imageVector =
+                                        if (shouldBePlaying) Icons.Outlined.Pause
+                                        else if (binder.player.playbackState == Player.STATE_ENDED) Icons.Outlined.Replay
+                                        else Icons.Outlined.PlayArrow,
+                                    contentDescription = null,
+                                )
+                            }
                         }
 
                         IconButton(

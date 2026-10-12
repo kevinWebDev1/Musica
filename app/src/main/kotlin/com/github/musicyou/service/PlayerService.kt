@@ -645,6 +645,12 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                 player.stop()
                 player.clearMediaItems()
                 
+                binder.sessionManager.onTrackChanged(
+                    mediaId = youtubeMediaItem.mediaId,
+                    reason = androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                    startPos = currentPosition
+                )
+                
                 coroutineScope.launch(Dispatchers.Main) {
                     hybridPlaybackEngine.loadMediaItem(youtubeMediaItem, currentPosition, playWhenReady)
                 }
@@ -1118,13 +1124,23 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
     }
 
     fun createCacheDataSource(): DataSource.Factory {
+        val userAgent = currentStreamUserAgent ?: "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(16000)
+            .setReadTimeoutMs(8000)
+            .setUserAgent(userAgent)
+            .setAllowCrossProtocolRedirects(true)
+        currentStreamCookie?.let { cookie ->
+            httpFactory.setDefaultRequestProperties(mapOf(
+                "User-Agent" to userAgent,
+                "Cookie" to cookie,
+                "Referer" to "https://sportslive.wine"
+            ))
+        }
+        httpDataSourceFactory = httpFactory
         return CacheDataSource.Factory().setCache(cache).apply {
             setUpstreamDataSourceFactory(
-                DefaultDataSource.Factory(this@PlayerService, DefaultHttpDataSource.Factory()
-                    .setConnectTimeoutMs(16000)
-                    .setReadTimeoutMs(8000)
-                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0")
-                )
+                DefaultDataSource.Factory(this@PlayerService, httpFactory)
             )
         }
     }
@@ -1138,13 +1154,34 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
 
             android.util.Log.d("ResolvingDataSource", "Resolving stream - videoId: $videoId, uri: $uriString")
 
-            if (videoId.startsWith("content://") || videoId.startsWith("file://") ||
-                uriString.startsWith("content://") || uriString.startsWith("file://")) { // Local file
-                android.util.Log.d("ResolvingDataSource", "Detected local file, bypassing Innertube and enabling video decoder.")
+            val isLocalScheme = videoId.startsWith("content://") || videoId.startsWith("file://") ||
+                uriString.startsWith("content://") || uriString.startsWith("file://")
+            val isYouTubeId = videoId.length == 11 || videoId.startsWith("youtube-embed:")
+            val isDirectStream = (uriString.startsWith("http://") || uriString.startsWith("https://")) &&
+                !uriString.contains("youtube.com") && !uriString.contains("youtu.be") && !isYouTubeId
+
+            if (isLocalScheme || isDirectStream) {
+                android.util.Log.d("ResolvingDataSource", "Detected local media / direct stream ($uriString), bypassing Innertube and enabling video decoder.")
                 kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) {
+                    val prefRes = currentPreferredResolution ?: "1080p"
+                    val (maxW, maxH) = when (prefRes.lowercase().removeSuffix("p")) {
+                        "480" -> 854 to 480
+                        "720" -> 1280 to 720
+                        "1080" -> 1920 to 1080
+                        "4k", "2160" -> 3840 to 2160
+                        else -> 1920 to 1080
+                    }
                     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setMaxVideoSize(maxW, maxH)
                         .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
                         .build()
+                }
+                if (!currentStreamCookie.isNullOrBlank()) {
+                    val headers = HashMap(dataSpec.httpRequestHeaders)
+                    headers["Cookie"] = currentStreamCookie!!
+                    headers["User-Agent"] = currentStreamUserAgent ?: "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+                    headers["Referer"] = "https://sportslive.wine"
+                    return@Factory dataSpec.buildUpon().setHttpRequestHeaders(headers).build()
                 }
                 return@Factory dataSpec
             }
@@ -1451,6 +1488,16 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
             }
         }
         
+        fun syncSetPlaybackSpeed(speed: Float) {
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                android.util.Log.d("MusicSync", "syncSetPlaybackSpeed: Routing through SessionManager")
+                sessionManager.changePlaybackSpeed(speed)
+            } else {
+                android.util.Log.d("MusicSync", "syncSetPlaybackSpeed: No sync active, direct set")
+                hybridPlaybackEngine.setPlaybackSpeed(speed)
+            }
+        }
+        
         fun toggleForceVideo(forceVideo: Boolean) {
             val currentItem = hybridPlaybackEngine.playbackState.value.mediaItem ?: return
             
@@ -1524,9 +1571,43 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
                     hybridPlaybackEngine.loadTrack(newMediaId, currentPosition, isPlaying, null)
                 }
                 
-                if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
-                    sessionManager.onTrackChanged(newMediaId, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED, currentPosition)
+                if (this@PlayerService::sessionManager.isInitialized) {
+                    sessionManager.notifyModeSwitchCooldown()
+                    if (sessionManager.sessionState.value.sessionId != null) {
+                        sessionManager.onTrackChanged(newMediaId, androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED, currentPosition)
+                    }
                 }
+            }
+        }
+
+        /**
+         * Sync-aware loadMediaItem (especially for YouTube videos).
+         * Routes through SessionManager when sync is active so participants can change tracks.
+         */
+        fun syncLoadMediaItem(mediaItem: androidx.media3.common.MediaItem, seekPositionMs: Long = 0, autoPlay: Boolean = false) {
+            val prefRes = mediaItem.mediaMetadata.extras?.getString("preferredResolution") ?: currentPreferredResolution
+            if (prefRes != null) {
+                currentPreferredResolution = prefRes
+                val (maxW, maxH) = when (prefRes.lowercase().removeSuffix("p")) {
+                    "480" -> 854 to 480
+                    "720" -> 1280 to 720
+                    "1080" -> 1920 to 1080
+                    "4k", "2160" -> 3840 to 2160
+                    else -> Int.MAX_VALUE to Int.MAX_VALUE
+                }
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setMaxVideoSize(maxW, maxH)
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                    .build()
+            }
+            hybridPlaybackEngine.loadMediaItem(mediaItem, seekPositionMs, autoPlay)
+            
+            if (this@PlayerService::sessionManager.isInitialized && sessionManager.sessionState.value.sessionId != null) {
+                sessionManager.onTrackChanged(
+                    mediaItem.mediaId, 
+                    androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+                    seekPositionMs
+                )
             }
         }
 
@@ -1822,13 +1903,42 @@ class PlayerService : InvincibleService(), Player.Listener, PlaybackStatsListene
         }
     }
 
-    private companion object {
-        const val NOTIFICATION_ID = 1001
-        const val NOTIFICATION_CHANNEL_ID = "default_channel_id"
+    companion object {
+        var httpDataSourceFactory: androidx.media3.datasource.DefaultHttpDataSource.Factory? = null
+        var currentStreamUserAgent: String? = null
+            set(value) {
+                field = value
+                updateHttpFactoryHeaders()
+            }
+            
+        var currentStreamCookie: String? = null
+            set(value) {
+                field = value
+                updateHttpFactoryHeaders()
+            }
 
-        const val SLEEP_TIMER_NOTIFICATION_ID = 1002
-        const val SLEEP_TIMER_NOTIFICATION_CHANNEL_ID = "sleep_timer_channel_id"
+        var currentPreferredResolution: String? = null
+            
+        private fun updateHttpFactoryHeaders() {
+            httpDataSourceFactory?.let { factory ->
+                val userAgent = currentStreamUserAgent ?: "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
+                val props = mutableMapOf(
+                    "User-Agent" to userAgent,
+                    "Referer" to "https://sportslive.wine"
+                )
+                if (!currentStreamCookie.isNullOrBlank()) {
+                    props["Cookie"] = currentStreamCookie!!
+                }
+                factory.setDefaultRequestProperties(props)
+            }
+        }
 
-        const val FAVORITE_ACTION = "FAVORITE"
+        private const val NOTIFICATION_ID = 1001
+        private const val NOTIFICATION_CHANNEL_ID = "default_channel_id"
+
+        private const val SLEEP_TIMER_NOTIFICATION_ID = 1002
+        private const val SLEEP_TIMER_NOTIFICATION_CHANNEL_ID = "sleep_timer_channel_id"
+
+        private const val FAVORITE_ACTION = "FAVORITE"
     }
 }

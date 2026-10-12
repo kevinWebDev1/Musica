@@ -23,8 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,6 +41,7 @@ import com.github.musicyou.LocalPlayerPadding
 import com.github.musicyou.R
 import com.github.musicyou.models.Song
 import com.github.musicyou.ui.components.HomeScaffold
+import com.github.musicyou.ui.components.TooltipIconButton
 import com.github.musicyou.ui.items.LocalSongItem
 import com.github.musicyou.viewmodels.VideoFolder
 import com.github.musicyou.viewmodels.VideosViewModel
@@ -58,8 +61,11 @@ import androidx.media3.common.MediaItem
 import kotlinx.coroutines.async
 import com.github.musicyou.utils.asMediaItem
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 enum class LocalMediaType {
-    ALL, FOLDERS, MUSIC, YOUTUBE
+    ALL, FOLDERS, MUSIC, YOUTUBE, MOVIES
 }
 
 @OptIn(ExperimentalAnimationApi::class, ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -76,6 +82,7 @@ fun HomeVideos(
     val filteredAllVideos by viewModel.filteredAllVideos.collectAsState()
     val filteredVideoFolders by viewModel.filteredVideoFolders.collectAsState()
     val filteredAllMusic by viewModel.filteredAllMusic.collectAsState()
+    val filteredCombinedMedia by viewModel.filteredCombinedMedia.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
 
     var selectedFolder by remember { mutableStateOf<VideoFolder?>(null) }
@@ -86,12 +93,20 @@ fun HomeVideos(
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
 
-    var hasPermission by remember { mutableStateOf(false) }
-
     val permissions = if (isAtLeastAndroid13) {
         arrayOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.READ_MEDIA_VIDEO)
     } else {
         arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
+    var hasPermission by remember { 
+        mutableStateOf(
+            permissions.all {
+                ContextCompat.checkSelfPermission(
+                    context, it
+                ) == PackageManager.PERMISSION_GRANTED
+            }
+        ) 
     }
 
     val launcher = rememberLauncherForActivityResult(
@@ -120,7 +135,17 @@ fun HomeVideos(
         title = R.string.videos,
         openSearch = openSearch,
         openProfile = openProfile,
-        openSettings = openSettings
+        openSettings = openSettings,
+        extraActions = {
+            if (hasPermission) {
+                TooltipIconButton(
+                    description = R.string.refresh,
+                    onClick = { viewModel.loadMedia() },
+                    icon = Icons.Outlined.Refresh,
+                    inTopBar = true
+                )
+            }
+        }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(top = paddingValues.calculateTopPadding(), bottom = paddingValues.calculateBottomPadding())) {
             // Header Content: Search Bar and Pills
@@ -131,9 +156,9 @@ fun HomeVideos(
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column {
-                    // Search Bar — hidden when YouTube tab is active (it has its own)
+                    // Search Bar — hidden when YouTube or MovieBox tab is active (they have their own)
                     AnimatedVisibility(
-                        visible = selectedMediaType != LocalMediaType.YOUTUBE,
+                        visible = selectedMediaType != LocalMediaType.YOUTUBE && selectedMediaType != LocalMediaType.MOVIES,
                         enter = expandVertically() + fadeIn(),
                         exit = shrinkVertically() + fadeOut()
                     ) {
@@ -172,6 +197,7 @@ fun HomeVideos(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -194,6 +220,11 @@ fun HomeVideos(
                             text = "YouTube",
                             selected = selectedMediaType == LocalMediaType.YOUTUBE,
                             onClick = { setSelectedMediaType(LocalMediaType.YOUTUBE) }
+                        )
+                        FilterPill(
+                            text = "Movies & Shows",
+                            selected = selectedMediaType == LocalMediaType.MOVIES,
+                            onClick = { setSelectedMediaType(LocalMediaType.MOVIES) }
                         )
                     }
                 }
@@ -227,24 +258,32 @@ fun HomeVideos(
                             )
                         }
                         
-                        LazyColumn(
-                            contentPadding = PaddingValues(bottom = 16.dp + playerPadding),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            val filteredVideosInFolder = if (searchQuery.isBlank()) {
-                                currentFolder.videos
-                            } else {
-                                currentFolder.videos.filter { it.title.contains(searchQuery, ignoreCase = true) }
-                            }
-                            
-                            items(filteredVideosInFolder, key = { it.id }) { video ->
-                                LocalSongItem(
-                                    song = video,
-                                    isPlaying = false,
-                                    onClick = { onVideoClick(video) },
-                                    onLongClick = { },
-                                    modifier = Modifier.animateItem()
-                                )
+                        val filteredVideosInFolder = if (searchQuery.isBlank()) {
+                            currentFolder.videos
+                        } else {
+                            currentFolder.videos.filter { it.title.contains(searchQuery, ignoreCase = true) }
+                        }
+                        
+                        if (filteredVideosInFolder.isEmpty()) {
+                            EmptyMediaState(
+                                icon = Icons.Default.Folder,
+                                title = "Folder is empty",
+                                description = if (searchQuery.isBlank()) "No videos found in this folder." else "No videos matched \"$searchQuery\" in this folder."
+                            )
+                        } else {
+                            LazyColumn(
+                                contentPadding = PaddingValues(bottom = 16.dp + playerPadding),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(filteredVideosInFolder, key = { it.id }) { video ->
+                                    LocalSongItem(
+                                        song = video,
+                                        isPlaying = false,
+                                        onClick = { onVideoClick(video) },
+                                        onLongClick = { },
+                                        modifier = Modifier.animateItem()
+                                    )
+                                }
                             }
                         }
                     }
@@ -255,6 +294,38 @@ fun HomeVideos(
                     ) { mediaType ->
                         if (mediaType == LocalMediaType.YOUTUBE) {
                             YouTubeVideoSearch()
+                        } else if (mediaType == LocalMediaType.MOVIES) {
+                            val binder = LocalPlayerServiceBinder.current
+                            MovieBoxBrowse(
+                                viewModel = viewModel,
+                                onPlayStream = { stream, title, posterUrl, quality ->
+                                    val extras = android.os.Bundle().apply {
+                                        putBoolean("forceVideo", true)
+                                        putBoolean("isLocal", true)
+                                        putString("streamCookie", stream.signCookie)
+                                        putString("streamUserAgent", stream.userAgent)
+                                        putString("preferredResolution", quality)
+                                    }
+                                    val mediaItem = androidx.media3.common.MediaItem.Builder()
+                                        .setUri(stream.manifestUrl)
+                                        .setMediaId(stream.manifestUrl)
+                                        .setMimeType(if (stream.manifestUrl.endsWith(".mpd")) androidx.media3.common.MimeTypes.APPLICATION_MPD else androidx.media3.common.MimeTypes.VIDEO_MP4)
+                                        .setMediaMetadata(
+                                            androidx.media3.common.MediaMetadata.Builder()
+                                                .setTitle(title)
+                                                .setArtist("MovieBox Stream • $quality")
+                                                .setArtworkUri(posterUrl?.let { android.net.Uri.parse(it) })
+                                                .setExtras(extras)
+                                                .build()
+                                        )
+                                        .build()
+
+                                    com.github.musicyou.service.PlayerService.currentStreamCookie = stream.signCookie
+                                    com.github.musicyou.service.PlayerService.currentStreamUserAgent = stream.userAgent
+                                    com.github.musicyou.service.PlayerService.currentPreferredResolution = quality
+                                    binder?.syncLoadMediaItem(mediaItem, 0L, autoPlay = true)
+                                }
+                            )
                         } else if (!hasPermission) {
                             Box(
                                 modifier = Modifier.fillMaxSize(),
@@ -269,50 +340,102 @@ fun HomeVideos(
                                 }
                             }
                         } else {
-                            LazyColumn(
-                                contentPadding = PaddingValues(
-                                    bottom = 16.dp + playerPadding,
-                                    top = 8.dp
-                                ),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                when (mediaType) {
-                                    LocalMediaType.ALL -> {
-                                        items(filteredAllVideos, key = { it.id }) { video ->
-                                            LocalSongItem(
-                                                song = video,
-                                                isPlaying = false,
-                                                onClick = { onVideoClick(video) },
-                                                onLongClick = { },
-                                                modifier = Modifier.animateItem()
-                                            )
+                            when (mediaType) {
+                                LocalMediaType.ALL -> {
+                                    if (filteredCombinedMedia.isEmpty()) {
+                                        EmptyMediaState(
+                                            icon = Icons.Default.VideoLibrary,
+                                            title = if (searchQuery.isNotBlank()) "No matching media" else "No local media found",
+                                            description = if (searchQuery.isNotBlank()) "No files matched \"$searchQuery\"." else "No videos or music tracks found in your local storage.",
+                                            actionText = "Refresh Storage",
+                                            onAction = { viewModel.loadMedia() },
+                                            secondaryActionText = "Browse Movies & Shows",
+                                            onSecondaryAction = { setSelectedMediaType(LocalMediaType.MOVIES) }
+                                        )
+                                    } else {
+                                        LazyColumn(
+                                            contentPadding = PaddingValues(
+                                                bottom = 16.dp + playerPadding,
+                                                top = 8.dp
+                                            ),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            items(filteredCombinedMedia, key = { it.id }) { item ->
+                                                LocalSongItem(
+                                                    song = item,
+                                                    isPlaying = false,
+                                                    onClick = { onVideoClick(item) },
+                                                    onLongClick = { },
+                                                    modifier = Modifier.animateItem()
+                                                )
+                                            }
                                         }
                                     }
-                                    LocalMediaType.FOLDERS -> {
-                                        items(filteredVideoFolders, key = { it.name }) { folder ->
-                                            FolderItem(
-                                                folder = folder,
-                                                onClick = { 
-                                                    selectedFolder = folder
-                                                    focusManager.clearFocus()
-                                                },
-                                                modifier = Modifier.animateItem()
-                                            )
-                                        }
-                                    }
-                                    LocalMediaType.MUSIC -> {
-                                        items(filteredAllMusic, key = { it.id }) { music ->
-                                            LocalSongItem(
-                                                song = music,
-                                                isPlaying = false,
-                                                onClick = { onVideoClick(music) },
-                                                onLongClick = { },
-                                                modifier = Modifier.animateItem()
-                                            )
-                                        }
-                                    }
-                                    LocalMediaType.YOUTUBE -> {}
                                 }
+                                LocalMediaType.FOLDERS -> {
+                                    if (filteredVideoFolders.isEmpty()) {
+                                        EmptyMediaState(
+                                            icon = Icons.Default.Folder,
+                                            title = if (searchQuery.isNotBlank()) "No matching folders" else "No video folders found",
+                                            description = if (searchQuery.isNotBlank()) "No folders matched \"$searchQuery\"." else "Folders containing videos on your device storage will appear here.",
+                                            actionText = "Refresh Storage",
+                                            onAction = { viewModel.loadMedia() },
+                                            secondaryActionText = "Browse Movies & Shows",
+                                            onSecondaryAction = { setSelectedMediaType(LocalMediaType.MOVIES) }
+                                        )
+                                    } else {
+                                        LazyColumn(
+                                            contentPadding = PaddingValues(
+                                                bottom = 16.dp + playerPadding,
+                                                top = 8.dp
+                                            ),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            items(filteredVideoFolders, key = { it.name }) { folder ->
+                                                FolderItem(
+                                                    folder = folder,
+                                                    onClick = { 
+                                                        selectedFolder = folder
+                                                        focusManager.clearFocus()
+                                                    },
+                                                    modifier = Modifier.animateItem()
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                LocalMediaType.MUSIC -> {
+                                    if (filteredAllMusic.isEmpty()) {
+                                        EmptyMediaState(
+                                            icon = Icons.Filled.MusicNote,
+                                            title = if (searchQuery.isNotBlank()) "No matching music" else "No local music found",
+                                            description = if (searchQuery.isNotBlank()) "No songs matched \"$searchQuery\"." else "Local audio and music tracks will appear here.",
+                                            actionText = "Refresh Storage",
+                                            onAction = { viewModel.loadMedia() },
+                                            secondaryActionText = "Explore YouTube",
+                                            onSecondaryAction = { setSelectedMediaType(LocalMediaType.YOUTUBE) }
+                                        )
+                                    } else {
+                                        LazyColumn(
+                                            contentPadding = PaddingValues(
+                                                bottom = 16.dp + playerPadding,
+                                                top = 8.dp
+                                            ),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            items(filteredAllMusic, key = { it.id }) { music ->
+                                                LocalSongItem(
+                                                    song = music,
+                                                    isPlaying = false,
+                                                    onClick = { onVideoClick(music) },
+                                                    onLongClick = { },
+                                                    modifier = Modifier.animateItem()
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                LocalMediaType.YOUTUBE, LocalMediaType.MOVIES -> {}
                             }
                         }
                     }
@@ -344,6 +467,75 @@ fun FilterPill(
             fontWeight = FontWeight.Medium,
             style = MaterialTheme.typography.labelLarge
         )
+    }
+}
+
+@Composable
+fun EmptyMediaState(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null,
+    secondaryActionText: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(38.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            if (actionText != null && onAction != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                FilledTonalButton(
+                    onClick = onAction,
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Text(text = actionText, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (secondaryActionText != null && onSecondaryAction != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = onSecondaryAction) {
+                    Text(text = secondaryActionText)
+                }
+            }
+        }
     }
 }
 
@@ -414,8 +606,19 @@ fun YouTubeVideoSearch() {
     
     val suggestionsResult by viewModel.ytSuggestionsResult.collectAsState()
     val setSuggestionsResult: (Result<List<String>>?) -> Unit = { viewModel.ytSuggestionsResult.value = it }
+    
+    val trendingVideos by viewModel.ytTrendingVideos.collectAsState()
+    val isTrendingLoading by viewModel.ytTrendingLoading.collectAsState()
+    val selectedCategory by viewModel.ytSelectedCategory.collectAsState()
+
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        if (trendingVideos.isEmpty()) {
+            viewModel.loadYouTubeTrending()
+        }
+    }
 
     LaunchedEffect(query) {
         setSuggestionsResult(if (query.isNotEmpty()) {
@@ -449,7 +652,7 @@ fun YouTubeVideoSearch() {
                                 } else {
                                     mediaItem.buildUpon().setMediaId("youtube-embed:${mediaItem.mediaId}").build()
                                 }
-                                binder?.hybridPlaybackEngine?.loadMediaItem(embedMediaItem, autoPlay = true)
+                                binder?.syncLoadMediaItem(embedMediaItem, autoPlay = true)
                             }
                         } ?: run {
                             android.util.Log.d("YouTubeSearch", "Song result was null or empty for videoId: $videoId")
@@ -581,7 +784,7 @@ fun YouTubeVideoSearch() {
                                 mediaItem.buildUpon().setMediaId("youtube-embed:${mediaItem.mediaId}").build()
                             }
                             android.util.Log.d("YouTubeSearch", "Calling hybridPlaybackEngine.loadMediaItem for: ${embedMediaItem.mediaId}")
-                            binder?.hybridPlaybackEngine?.loadMediaItem(embedMediaItem, 0, true)
+                            binder?.syncLoadMediaItem(embedMediaItem, 0, true)
                         }
                     )
                 }
@@ -604,32 +807,88 @@ fun YouTubeVideoSearch() {
                 }
             }
         } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_youtube),
-                        contentDescription = null,
-                        modifier = Modifier.size(72.dp),
-                        tint = androidx.compose.ui.graphics.Color.Unspecified
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        text = "Explore YouTube",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Paste a video link or type a search query to discover and play music videos. You can even watch YT in sync with friends!",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            val categories = listOf("🔥 Trending", "🎵 Top Hits", "🎧 Hip Hop", "⚡ Pop", "🎸 Rock", "✨ New")
+            
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Category Filter Pills
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    categories.forEach { category ->
+                        FilterPill(
+                            text = category,
+                            selected = selectedCategory == category,
+                            onClick = {
+                                if (selectedCategory != category) {
+                                    viewModel.loadYouTubeTrending(category)
+                                }
+                            }
+                        )
+                    }
+                }
+
+                if (isTrendingLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (trendingVideos.isNotEmpty()) {
+                    LazyColumn(
+                        contentPadding = PaddingValues(bottom = 16.dp + playerPadding),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = androidx.compose.ui.res.painterResource(id = R.drawable.ic_youtube),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = androidx.compose.ui.graphics.Color.Unspecified
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "$selectedCategory Videos",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+
+                        items(trendingVideos, key = { it.mediaId }) { mediaItem ->
+                            MediaSongItem(
+                                song = mediaItem,
+                                onClick = {
+                                    val embedMediaItem = if (mediaItem.mediaId.startsWith("youtube-embed:")) {
+                                        mediaItem
+                                    } else {
+                                        mediaItem.buildUpon().setMediaId("youtube-embed:${mediaItem.mediaId}").build()
+                                    }
+                                    binder?.syncLoadMediaItem(embedMediaItem, 0, true)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    EmptyMediaState(
+                        icon = Icons.Default.Search,
+                        title = "Unable to load videos",
+                        description = "Could not fetch YouTube videos right now. Check your connection.",
+                        actionText = "Try Again",
+                        onAction = { viewModel.loadYouTubeTrending(selectedCategory) }
                     )
                 }
             }

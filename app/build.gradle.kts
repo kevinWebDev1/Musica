@@ -25,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.github.musicyou"
         minSdk = 23
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 33
         versionName = "4.0.1"
         resConfigs("en", "xxhdpi") 
@@ -108,6 +108,8 @@ dependencies {
     implementation(libs.material.motion.compose)
     implementation(libs.media)
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.dash)
+    implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     implementation(libs.nextlib.media3ext)
     implementation(libs.reorderable)

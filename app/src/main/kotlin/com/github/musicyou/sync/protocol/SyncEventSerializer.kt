@@ -33,6 +33,9 @@ object SyncEventSerializer {
                     fp.mimeType?.let { fpJson.put("mimeType", it) }
                     json.put("mediaFingerprint", fpJson)
                 }
+                event.streamCookie?.let { json.put("streamCookie", it) }
+                event.streamUserAgent?.let { json.put("streamUserAgent", it) }
+                json.put("isDirectStream", event.isDirectStream)
             }
             is PauseEvent -> {
                 json.put("type", "PAUSE")
@@ -111,12 +114,19 @@ object SyncEventSerializer {
                     stateJson.put("mediaFingerprint", fpJson)
                 }
                 
+                event.state.streamCookie?.let { stateJson.put("streamCookie", it) }
+                event.state.streamUserAgent?.let { stateJson.put("streamUserAgent", it) }
+                stateJson.put("isDirectStream", event.state.isDirectStream)
+                
                 json.put("state", stateJson)
             }
             is PingEvent -> {
                 json.put("type", "PING")
                 json.put("id", event.id)
                 json.put("clientTimestamp", event.clientTimestamp)
+                event.currentMediaId?.let { json.put("currentMediaId", it) }
+                json.put("currentPos", event.currentPos)
+                json.put("playbackStatus", event.playbackStatus.name)
             }
             is PongEvent -> {
                 json.put("type", "PONG")
@@ -172,7 +182,10 @@ object SyncEventSerializer {
                             sizeBytes = fpJson.optLong("sizeBytes", 0L),
                             mimeType = fpJson.optString("mimeType", null).takeIf { it?.isNotEmpty() == true }
                         )
-                    }
+                    },
+                    streamCookie = json.optString("streamCookie", null).takeIf { it?.isNotEmpty() == true },
+                    streamUserAgent = json.optString("streamUserAgent", null).takeIf { it?.isNotEmpty() == true },
+                    isDirectStream = json.optBoolean("isDirectStream", false)
                 )
                 "PAUSE" -> PauseEvent(
                     pos = json.getLong("pos"),
@@ -257,15 +270,29 @@ object SyncEventSerializer {
                                 sizeBytes = fpJson.optLong("sizeBytes", 0L),
                                 mimeType = fpJson.optString("mimeType", null).takeIf { it?.isNotEmpty() == true }
                             )
-                        }
+                        },
+                        streamCookie = stateJson.optString("streamCookie", null).takeIf { it?.isNotEmpty() == true },
+                        streamUserAgent = stateJson.optString("streamUserAgent", null).takeIf { it?.isNotEmpty() == true },
+                        isDirectStream = stateJson.optBoolean("isDirectStream", false)
                     )
                     StateSyncEvent(state, timestamp)
                 }
-                "PING" -> PingEvent(
-                    id = json.getString("id"),
-                    clientTimestamp = json.getLong("clientTimestamp"),
-                    timestamp = timestamp
-                )
+                "PING" -> {
+                    val statusStr = json.optString("playbackStatus", SessionState.Status.PAUSED.name)
+                    val status = try {
+                        SessionState.Status.valueOf(statusStr)
+                    } catch (e: IllegalArgumentException) {
+                        SessionState.Status.PAUSED
+                    }
+                    PingEvent(
+                        id = json.getString("id"),
+                        clientTimestamp = json.getLong("clientTimestamp"),
+                        timestamp = timestamp,
+                        currentMediaId = json.optString("currentMediaId", null).takeIf { it?.isNotEmpty() == true },
+                        currentPos = json.optLong("currentPos", 0L),
+                        playbackStatus = status
+                    )
+                }
                 "PONG" -> PongEvent(
                     id = json.getString("id"),
                     clientTimestamp = json.getLong("clientTimestamp"),

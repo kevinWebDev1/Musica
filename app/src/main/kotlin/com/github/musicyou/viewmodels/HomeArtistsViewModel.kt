@@ -32,11 +32,9 @@ class HomeArtistsViewModel : ViewModel() {
             try {
                 val page = Innertube.artistPage(artist.id)?.getOrNull()
                 val thumbnailUrl = page?.thumbnail?.url
-                println("MUSICA-LOG: Fetched artist ${artist.name} (${artist.id}) - thumbnail: $thumbnailUrl")
                 if (thumbnailUrl != null) {
                     Database.update(artist.copy(thumbnailUrl = thumbnailUrl))
                 } else {
-                    println("MUSICA-LOG: Thumbnail was null for artist ${artist.name}. Page name: ${page?.name}")
                     Database.update(artist.copy(thumbnailUrl = ""))
                 }
             } catch (e: Exception) {

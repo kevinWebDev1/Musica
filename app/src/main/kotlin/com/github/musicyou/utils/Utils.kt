@@ -117,7 +117,8 @@ val Song.asMediaItem: MediaItem
                 .setArtworkUri(thumbnailUrl?.toUri())
                 .setExtras(
                     bundleOf(
-                        "durationText" to durationText
+                        "durationText" to durationText,
+                        "forceVideo" to (artistsText == "Video")
                     )
                 )
                 .build()

@@ -643,6 +643,7 @@ fun NeumorphicToggleButton(
 fun NeumorphicPlayButton(
     isPlaying: Boolean,
     isEnded: Boolean,
+    isBuffering: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 72.dp,
@@ -702,11 +703,19 @@ fun NeumorphicPlayButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = if (isPlaying) "Pause" else "Play",
-            modifier = Modifier.size(iconSize),
-            tint = colors.onBackground
-        )
+        if (isBuffering) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(iconSize),
+                color = colors.onBackground,
+                strokeWidth = 3.dp
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                modifier = Modifier.size(iconSize),
+                tint = colors.onBackground
+            )
+        }
     }
 }

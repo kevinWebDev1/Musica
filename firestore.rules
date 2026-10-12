@@ -42,7 +42,8 @@ service cloud.firestore {
 
       // Presence subcollection
       match /presence/{presenceId} {
-        allow read, write: if isSignedIn() && isMe(userId);
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && isMe(userId);
       }
 
       // Public Playlists subcollection

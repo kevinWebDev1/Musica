@@ -97,42 +97,40 @@ fun DoubleTapSeekOverlay(
     LaunchedEffect(Unit) {
         // Fade in and scale up quickly, then fade out
         alphaAnim.animateTo(1f, animationSpec = tween(150, easing = LinearEasing))
-        scaleAnim.animateTo(1.2f, animationSpec = tween(400, easing = LinearEasing))
+        scaleAnim.animateTo(1.1f, animationSpec = tween(400, easing = LinearEasing))
         alphaAnim.animateTo(0f, animationSpec = tween(200, easing = LinearEasing))
     }
 
     val align = if (isForward) Alignment.CenterEnd else Alignment.CenterStart
-    val shape = if (isForward) RoundedCornerShape(topStart = 150.dp, bottomStart = 150.dp) else RoundedCornerShape(topEnd = 150.dp, bottomEnd = 150.dp)
     
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().padding(horizontal = 48.dp),
         contentAlignment = align
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
             modifier = Modifier
-                .fillMaxHeight(0.8f)
-                .width(140.dp)
                 .alpha(alphaAnim.value)
                 .graphicsLayer {
                     scaleX = scaleAnim.value
                     scaleY = scaleAnim.value
                 }
-                .background(Color.White.copy(alpha = 0.15f), shape)
+                .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
+                .padding(vertical = 16.dp, horizontal = 24.dp)
         ) {
             Icon(
                 imageVector = if (isForward) Icons.Default.FastForward else Icons.Default.FastRewind,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(48.dp)
+                modifier = Modifier.size(32.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "10s", 
                 color = Color.White, 
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleSmall
             )
         }
     }

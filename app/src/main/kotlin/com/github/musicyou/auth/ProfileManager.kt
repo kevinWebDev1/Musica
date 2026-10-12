@@ -685,7 +685,11 @@ object ProfileManager {
                     .document("current")
                     .addSnapshotListener { snapshot, error ->
                         if (error != null) {
-                            android.util.Log.e("ProfileManager", "Friend presence listener error", error)
+                            if (error.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED && auth.currentUser == null) {
+                                // Expected during sign-out, ignore
+                            } else {
+                                android.util.Log.w("ProfileManager", "Friend presence listener error: ${error.message}")
+                            }
                             return@addSnapshotListener
                         }
 

@@ -42,6 +42,12 @@ object SyncManager {
         }
     }
 
+    fun triggerRestoreUserData(context: Context) {
+        scope.launch {
+            restoreUserData(context)
+        }
+    }
+
     /**
      * Backs up favorites to Firestore.
      */
@@ -134,7 +140,15 @@ object SyncManager {
             // 1. Private Backup (Lightweight)
             val playlistData = mapOf(
                 "name" to playlist.name,
-                "songs" to songs.map { it.id }
+                "songs" to songs.map { song ->
+                    mapOf(
+                        "id" to song.id,
+                        "title" to song.title,
+                        "artistsText" to song.artistsText,
+                        "durationText" to song.durationText,
+                        "thumbnailUrl" to song.thumbnailUrl
+                    )
+                }
             )
             firestore.collection(DATA_COLLECTION).document(user.uid)
                 .collection("playlists").document(playlistId.toString()).set(playlistData).await()
@@ -259,11 +273,35 @@ object SyncManager {
             
             playlistsSnapshot.documents.forEach { doc ->
                 val name = doc.getString("name") ?: return@forEach
-                val songIds = doc.get("songs") as? List<String> ?: return@forEach
+                val songsList = doc.get("songs") as? List<*> ?: return@forEach
                 
                 query {
                     val playlistId = Database.insert(Playlist(name = name))
-                    songIds.forEachIndexed { index, songId ->
+                    songsList.forEachIndexed { index, songItem ->
+                        val songId = if (songItem is String) {
+                            // Old format: List of IDs. Insert a stub Song to satisfy Foreign Key.
+                            Database.insert(Song(
+                                id = songItem,
+                                title = "Unknown Title",
+                                durationText = null,
+                                thumbnailUrl = null
+                            ))
+                            songItem
+                        } else if (songItem is Map<*, *>) {
+                            // New format: Map containing song details
+                            val id = songItem["id"] as? String ?: return@forEachIndexed
+                            Database.insert(Song(
+                                id = id,
+                                title = songItem["title"] as? String ?: "Unknown Title",
+                                artistsText = songItem["artistsText"] as? String,
+                                durationText = songItem["durationText"] as? String,
+                                thumbnailUrl = songItem["thumbnailUrl"] as? String
+                            ))
+                            id
+                        } else {
+                            return@forEachIndexed
+                        }
+                        
                         Database.insert(com.github.musicyou.models.SongPlaylistMap(
                             songId = songId,
                             playlistId = playlistId,

@@ -40,6 +40,8 @@ import com.github.musicyou.ui.screens.profile.NeumorphicButton
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import com.google.firebase.auth.ktx.auth
+import com.google.firebase.ktx.Firebase
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -64,6 +66,16 @@ fun FriendProfileScreen(
     var presence by remember { mutableStateOf<UserPresence?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var isUnfollowing by remember { mutableStateOf(false) }
+
+    var myPresence by remember { mutableStateOf<UserPresence?>(null) }
+    val firebaseUser = remember { Firebase.auth.currentUser }
+    LaunchedEffect(firebaseUser?.uid) {
+        firebaseUser?.uid?.let { u ->
+            PresenceManager.observeUserPresence(u).collect {
+                myPresence = it
+            }
+        }
+    }
 
     // Fetch Profile
     LaunchedEffect(uid) {
@@ -332,23 +344,29 @@ fun FriendProfileScreen(
                                         )
                                     }
                                     
+                                    val isAlreadyJoined = myPresence?.sessionId != null && myPresence?.sessionId == sessionId
+                                    
                                     // Gradient Join Button
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(50))
                                             .background(
-                                                Brush.linearGradient(
-                                                    listOf(Color(0xFFD500F9), Color(0xFFFF4081))
-                                                )
+                                                if (isAlreadyJoined) {
+                                                    Brush.linearGradient(listOf(Color.Gray, Color.DarkGray))
+                                                } else {
+                                                    Brush.linearGradient(listOf(Color(0xFFD500F9), Color(0xFFFF4081)))
+                                                }
                                             )
-                                            .clickable { 
-                                                onJoinSession(sessionId)
-                                                Toast.makeText(context, "Joining...", Toast.LENGTH_SHORT).show()
+                                            .clickable(enabled = !isAlreadyJoined) { 
+                                                if (!isAlreadyJoined) {
+                                                    onJoinSession(sessionId)
+                                                    Toast.makeText(context, "Joining...", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
                                             .padding(horizontal = 20.dp, vertical = 10.dp)
                                     ) {
                                         Text(
-                                            text = "Join",
+                                            text = if (isAlreadyJoined) "Joined" else "Join",
                                             color = Color.White,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 14.sp
@@ -400,6 +418,7 @@ fun FriendProfileScreen(
                     subtitle = "${playlist.songCount} songs",
                     icon = Icons.Default.QueueMusic,
                     iconColor = neonPurple,
+                    coverUrl = playlist.coverUrl,
                     onClick = { onPlaylistClick(playlist) }
                 )
             }
@@ -423,8 +442,9 @@ fun FriendProfileScreen(
 fun PlaylistSquareCard(
     title: String,
     subtitle: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconColor: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    iconColor: Color = Color.White,
+    coverUrl: String? = null,
     onClick: () -> Unit
 ) {
     val colors = rememberNeumorphicColors()
@@ -449,7 +469,16 @@ fun PlaylistSquareCard(
                     .neumorphicPressed(cornerRadius = 24.dp), // Inset circle
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
+                if (coverUrl != null) {
+                    AsyncImage(
+                        model = coverUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else if (icon != null) {
+                    Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp))
+                }
             }
             
             Column {

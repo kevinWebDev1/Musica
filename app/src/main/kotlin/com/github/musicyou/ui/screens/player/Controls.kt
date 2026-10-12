@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
@@ -97,6 +98,11 @@ fun Controls(
     LaunchedEffect(mediaId) {
         Database.likedAt(mediaId).distinctUntilChanged().collect { likedAt = it }
     }
+
+    val hybridState by binder.hybridPlaybackEngine.playbackState.collectAsState()
+    val isBuffering = hybridState.playbackState == com.github.musicyou.sync.playback.PlaybackState.STATE_BUFFERING ||
+        binder.player.playbackState == androidx.media3.common.Player.STATE_BUFFERING
+
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -263,6 +269,7 @@ fun Controls(
                 NeumorphicPlayButton(
                     isPlaying = shouldBePlaying,
                     isEnded = binder.player.playbackState == Player.STATE_ENDED,
+                    isBuffering = isBuffering,
                     onClick = {
                         if (shouldBePlaying) binder.syncPause() else binder.syncPlay()
                     },

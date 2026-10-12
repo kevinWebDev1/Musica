@@ -30,7 +30,10 @@ data class PlayEvent(
     val thumbnailUrl: String? = null,
     val requesterName: String? = null,
     val requesterAvatar: String? = null,
-    val mediaFingerprint: com.github.musicyou.sync.session.MediaFingerprint? = null
+    val mediaFingerprint: com.github.musicyou.sync.session.MediaFingerprint? = null,
+    val streamCookie: String? = null,
+    val streamUserAgent: String? = null,
+    val isDirectStream: Boolean = false
 ) : SyncEvent()
 
 /**

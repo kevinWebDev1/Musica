@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +60,7 @@ import com.github.musicyou.models.ActionInfo
 import com.github.musicyou.models.LocalMenuState
 import com.github.musicyou.models.Song
 import com.github.musicyou.query
+import com.github.musicyou.ui.components.EmptyPlaceholder
 import com.github.musicyou.ui.components.HomeScaffold
 import com.github.musicyou.ui.components.SortingHeader
 import com.github.musicyou.ui.components.SwipeToActionBox
@@ -176,6 +178,18 @@ fun HomeSongs(
                     size = viewModel.items.size,
                     itemCountText = R.plurals.number_of_songs
                 )
+            }
+
+            if (viewModel.items.isEmpty()) {
+                item(
+                    key = "empty_state",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    EmptyPlaceholder(
+                        icon = Icons.Outlined.MusicNote,
+                        text = "No songs found"
+                    )
+                }
             }
 
             itemsIndexed(

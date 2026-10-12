@@ -18,6 +18,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import com.github.innertube.Innertube
+import com.github.innertube.requests.searchPage
+import com.github.innertube.utils.from
+import com.github.musicyou.utils.asVideoMediaItem
+import androidx.media3.common.MediaItem
+
 data class VideoFolder(
     val name: String,
     val videos: List<Song>
@@ -31,15 +37,63 @@ class VideosViewModel(application: Application) : AndroidViewModel(application) 
     val searchQuery = MutableStateFlow("")
     
     // UI State for HomeVideos screen that needs to survive navigation backstack changes
-    val selectedMediaTypeIndex = MutableStateFlow(0) // 0=ALL, 1=FOLDERS, 2=MUSIC, 3=YOUTUBE
+    val selectedMediaTypeIndex = MutableStateFlow(0) // 0=ALL, 1=FOLDERS, 2=MUSIC, 3=YOUTUBE, 4=MOVIES
     
     // YouTube Video Search State
     val ytSearchQuery = MutableStateFlow("")
-    val ytSearchResults = MutableStateFlow<List<androidx.media3.common.MediaItem>>(emptyList())
+    val ytSearchResults = MutableStateFlow<List<MediaItem>>(emptyList())
     val ytHasSearched = MutableStateFlow(false)
     val ytErrorMessage = MutableStateFlow<String?>(null)
     val ytIsLoading = MutableStateFlow(false)
     val ytSuggestionsResult = MutableStateFlow<Result<List<String>>?>(null)
+
+    // YouTube Trending State
+    val ytTrendingVideos = MutableStateFlow<List<MediaItem>>(emptyList())
+    val ytTrendingLoading = MutableStateFlow(false)
+    val ytSelectedCategory = MutableStateFlow("🔥 Trending")
+
+    // MovieBox Movies & Shows State
+    val mbSearchQuery = MutableStateFlow("")
+    val mbSearchResults = MutableStateFlow<List<com.github.musicyou.providers.moviebox.MovieBoxItem>>(emptyList())
+    val mbTrendingResults = MutableStateFlow<List<com.github.musicyou.providers.moviebox.MovieBoxItem>>(emptyList())
+    val mbHasSearched = MutableStateFlow(false)
+    val mbIsLoading = MutableStateFlow(false)
+    val mbErrorMessage = MutableStateFlow<String?>(null)
+
+    fun searchMovieBox(query: String) {
+        if (query.isBlank()) {
+            mbHasSearched.value = false
+            mbSearchResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            mbIsLoading.value = true
+            mbErrorMessage.value = null
+            val result = com.github.musicyou.providers.moviebox.MovieBoxClient.search(query.trim())
+            if (result.isSuccess) {
+                mbSearchResults.value = result.getOrDefault(emptyList())
+                mbErrorMessage.value = null
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Failed to find content"
+                mbErrorMessage.value = err
+                mbSearchResults.value = emptyList()
+            }
+            mbHasSearched.value = true
+            mbIsLoading.value = false
+        }
+    }
+
+    fun loadMovieBoxTrending() {
+        if (mbTrendingResults.value.isNotEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            mbIsLoading.value = true
+            val result = com.github.musicyou.providers.moviebox.MovieBoxClient.getTrending()
+            if (result.isSuccess) {
+                mbTrendingResults.value = result.getOrDefault(emptyList())
+            }
+            mbIsLoading.value = false
+        }
+    }
 
     val filteredVideoFolders = combine(_videoFolders, searchQuery) { folders, query ->
         if (query.isBlank()) {
@@ -64,6 +118,41 @@ class VideosViewModel(application: Application) : AndroidViewModel(application) 
             (it.artistsText?.contains(query, ignoreCase = true) == true) 
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val filteredCombinedMedia = combine(filteredAllVideos, filteredAllMusic) { videos, music ->
+        videos + music
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun loadYouTubeTrending(category: String = ytSelectedCategory.value) {
+        ytSelectedCategory.value = category
+        viewModelScope.launch(Dispatchers.IO) {
+            ytTrendingLoading.value = true
+            try {
+                val query = when (category) {
+                    "🔥 Trending" -> "Trending music videos"
+                    "🎵 Top Hits" -> "Top music hits 2026"
+                    "🎧 Hip Hop" -> "Hip Hop music videos"
+                    "⚡ Pop" -> "Pop music hits"
+                    "🎸 Rock" -> "Rock music hits"
+                    "✨ New" -> "New music videos"
+                    else -> "$category music videos"
+                }
+                val searchResult = Innertube.searchPage(
+                    query = query,
+                    params = Innertube.SearchFilter.Video.value,
+                    fromMusicShelfRendererContent = { Innertube.VideoItem.from(it) }
+                )
+                val items = searchResult?.getOrNull()?.items?.map { it.asVideoMediaItem } ?: emptyList()
+                if (items.isNotEmpty()) {
+                    ytTrendingVideos.value = items
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                ytTrendingLoading.value = false
+            }
+        }
+    }
 
     init {
         loadMedia()

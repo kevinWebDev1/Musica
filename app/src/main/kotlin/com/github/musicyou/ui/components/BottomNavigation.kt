@@ -23,8 +23,14 @@ import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import com.github.musicyou.enums.NavigationLabelsVisibility
 import com.github.musicyou.ui.navigation.TopDestinations
 import com.github.musicyou.utils.homeScreenTabIndexKey
@@ -69,32 +75,57 @@ fun BottomNavigation(navController: NavHostController) {
                     },
                     icon = {
                         if (destination.route == com.github.musicyou.ui.navigation.Routes.Videos) {
-                            // Premium Ring for Video Tab
-                            val ringModifier = if (selected) {
-                                Modifier
-                                    .size(42.dp)
-                                    .border(
-                                        width = 2.dp,
-                                        brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                                            colors = listOf(
-                                                MaterialTheme.colorScheme.primary,
-                                                MaterialTheme.colorScheme.tertiary
-                                            )
-                                        ),
-                                        shape = androidx.compose.foundation.shape.CircleShape
+                            // Premium Permanent Ring with Luminous Glow when Active
+                            val activeProgress by animateFloatAsState(
+                                targetValue = if (selected) 1f else 0f,
+                                animationSpec = tween(durationMillis = 260),
+                                label = "VideoRingProgress"
+                            )
+
+                            val ringBrush = if (selected) {
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        MaterialTheme.colorScheme.tertiary
                                     )
-                                    .padding(8.dp)
+                                )
                             } else {
-                                Modifier.padding(8.dp)
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f)
+                                    )
+                                )
                             }
+
+                            val glowColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f * activeProgress)
+                            val secondaryGlow = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f * activeProgress)
 
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = ringModifier
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                glowColor,
+                                                secondaryGlow,
+                                                Color.Transparent
+                                            )
+                                        ),
+                                        shape = CircleShape
+                                    )
+                                    .border(
+                                        width = if (selected) 2.2.dp else 1.4.dp,
+                                        brush = ringBrush,
+                                        shape = CircleShape
+                                    )
+                                    .padding(8.dp)
                             ) {
                                 Icon(
                                     imageVector = if (selected) destination.selectedIcon else destination.unselectedIcon,
-                                    contentDescription = stringResource(id = destination.resourceId)
+                                    contentDescription = stringResource(id = destination.resourceId),
+                                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         } else {

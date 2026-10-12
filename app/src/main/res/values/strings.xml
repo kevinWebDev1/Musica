@@ -217,4 +217,5 @@
     <string name="delete_account_confirmation">Are you sure you want to delete your account? This cannot be undone.</string>
     <string name="playing_from_local">Playing from Local Storage</string>
     <string name="switch_to_local">Switch to Local File</string>
+    <string name="refresh">Refresh</string>
 </resources>

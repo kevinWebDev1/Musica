@@ -342,7 +342,6 @@ class WebRtcTransportLayer(
                 PeerConnection.IceConnectionState.CONNECTED -> {
                     cancelConnectionTimeout()
                     _connectionState.value = TransportLayer.ConnectionState.CONNECTED
-                    _connectedPeers.value = listOf("peer")
                     Log.i(TAG, "WebRTC: Connected!")
                 }
                 PeerConnection.IceConnectionState.DISCONNECTED -> {
@@ -428,10 +427,12 @@ class WebRtcTransportLayer(
                     DataChannel.State.OPEN -> {
                         cancelConnectionTimeout()
                         _connectionState.value = TransportLayer.ConnectionState.CONNECTED
+                        _connectedPeers.value = listOf("peer")
                         Log.i(TAG, "WebRTC: Data channel OPEN - ready to sync!")
                     }
                     DataChannel.State.CLOSED -> {
                         Log.d(TAG, "WebRTC: Data channel closed")
+                        _connectedPeers.value = emptyList()
                     }
                     else -> {}
                 }

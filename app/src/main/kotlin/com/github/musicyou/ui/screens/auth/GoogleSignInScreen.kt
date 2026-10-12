@@ -71,7 +71,7 @@ fun GoogleSignInScreen(
                     onSuccess = { user ->
                         Log.i("GoogleSignInScreen", "Sign-in successful: ${user.displayName}")
                         scope.launch {
-                            com.github.musicyou.auth.SyncManager.restoreUserData(context)
+                            com.github.musicyou.auth.SyncManager.triggerRestoreUserData(context)
                             ProfileManager.fetchUserProfile(context)
                             isLoading = false
                             onSignedIn()

@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ fun HomeScaffold(
     openProfile: () -> Unit = {},
     profileContent: @Composable (() -> Unit)? = null,
     openSettings: () -> Unit,
+    extraActions: @Composable RowScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit
 ) {
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
@@ -77,6 +79,8 @@ fun HomeScaffold(
                     }
                 },
                 actions = {
+                    extraActions()
+                    
                     TooltipIconButton(
                         description = R.string.search,
                         onClick = openSearch,

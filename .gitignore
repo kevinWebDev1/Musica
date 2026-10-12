@@ -12,3 +12,6 @@ local.properties
 keystore/
 *.apk
 music-you/
+.agents/
+skills-lock.json
+*.log

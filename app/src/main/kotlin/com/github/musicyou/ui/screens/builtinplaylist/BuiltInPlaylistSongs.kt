@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +42,7 @@ import com.github.musicyou.utils.asMediaItem
 import com.github.musicyou.utils.enqueue
 import com.github.musicyou.utils.forcePlayAtIndex
 import com.github.musicyou.utils.forcePlayFromBeginning
+import com.github.musicyou.ui.components.EmptyPlaceholder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOn
@@ -132,6 +134,15 @@ fun BuiltInPlaylistSongs(
 
         item(key = "spacer") {
             Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (songs.isEmpty()) {
+            item(key = "empty_state") {
+                EmptyPlaceholder(
+                    icon = Icons.Outlined.MusicNote,
+                    text = "No songs found"
+                )
+            }
         }
 
         itemsIndexed(

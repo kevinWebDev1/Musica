@@ -3,6 +3,7 @@ package com.github.musicyou.ui.screens.player
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -13,6 +14,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,7 +84,6 @@ import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.github.musicyou.utils.rememberPreference
-import com.github.musicyou.utils.videoResizeModeKey
 import com.github.musicyou.utils.doubleTapSeekDurationKey
 import com.github.musicyou.utils.scrubSeekIntensityKey
 import com.github.musicyou.utils.fastForwardSpeedTopKey
@@ -102,7 +103,9 @@ fun VideoSurface(
     onSpeedChange: (Float) -> Unit = {},
     isLocked: Boolean = false,
     onLockedChange: (Boolean) -> Unit = {},
-    baselineSpeed: Float = 1f
+    baselineSpeed: Float = 1f,
+    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+    onResizeModeChange: (Int) -> Unit = {}
 ) {
     // Gesture State
     var isBoosting by remember { mutableStateOf(false) }
@@ -113,21 +116,28 @@ fun VideoSurface(
     var seekRippleState by remember { mutableStateOf<SeekRippleData?>(null) }
     var playPauseState by remember { mutableStateOf<PlayPauseData?>(null) }
     var zoomToastState by remember { mutableStateOf<String?>(null) } 
+    var isBuffering by remember { mutableStateOf(false) }
+
+    DisposableEffect(player) {
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                isBuffering = playbackState == androidx.media3.common.Player.STATE_BUFFERING
+            }
+        }
+        player.addListener(listener)
+        isBuffering = player.playbackState == androidx.media3.common.Player.STATE_BUFFERING
+        onDispose {
+            player.removeListener(listener)
+        }
+    } 
     
     // Preferences
-    val prefResizeMode by rememberPreference(videoResizeModeKey, AspectRatioFrameLayout.RESIZE_MODE_FIT)
     val doubleTapSeekDuration by rememberPreference(doubleTapSeekDurationKey, 10)
     val scrubSeekIntensity by rememberPreference(scrubSeekIntensityKey, 1.0f)
     val ffTopSpeed by rememberPreference(fastForwardSpeedTopKey, 3.0f)
     val ffMidSpeed by rememberPreference(fastForwardSpeedMidKey, 2.0f)
     val ffBotSpeed by rememberPreference(fastForwardSpeedBotKey, 1.5f)
-    // Zoom / Resize State
-    var resizeMode by remember { mutableStateOf(prefResizeMode) }
     
-    // Sync initial preference if changed externally
-    LaunchedEffect(prefResizeMode) {
-        resizeMode = prefResizeMode
-    }
 
     val context = LocalContext.current
     val activity = context as? Activity
@@ -251,7 +261,7 @@ fun VideoSurface(
                     useController = false
                     isClickable = false
                     isFocusable = false
-                    resizeMode = resizeMode
+                    this.resizeMode = resizeMode
                     setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -365,10 +375,10 @@ fun VideoSurface(
                             
                             // Apply Zoom Threshold
                             if (zoomFactor > 1.1f) {
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                onResizeModeChange(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
                                 zoomToastState = "Zoomed to Fill"
                             } else if (zoomFactor < 0.9f) {
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                onResizeModeChange(AspectRatioFrameLayout.RESIZE_MODE_FIT)
                                 zoomToastState = "Fit to Screen"
                             }
                             // Clear toast after delay
@@ -630,6 +640,26 @@ fun VideoSurface(
             }
         }
 
+        if (isBuffering) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(40.dp),
+                        color = Color.White,
+                        strokeWidth = 3.5.dp
+                    )
+                }
+            }
+        }
+
         // 4. Unlock Overlay
         if (isLockControlsVisible && isLocked) {
             Box(
@@ -715,24 +745,21 @@ fun EdgeSpeedOverlay(
                 RoundedCornerShape(topEnd = 50.dp, bottomEnd = 50.dp)
             }
             
-            val targetWidth = if (isSelected) 180.dp else 100.dp
-            val animatedWidth by androidx.compose.animation.core.animateDpAsState(targetWidth)
-            
             Box(
                 modifier = Modifier
-                    .width(animatedWidth) 
+                    .animateContentSize()
+                    .defaultMinSize(minWidth = 80.dp)
                     .clip(shape)
                     .background(
-                        if (isSelected) Color(0xFF444444) 
-                        else Color(0xFF222222).copy(alpha = 0.8f)
+                        if (isSelected) Color.Black.copy(alpha = 0.65f) 
+                        else Color.Black.copy(alpha = 0.35f)
                     )
-                    .padding(vertical = 16.dp, horizontal = 24.dp) 
+                    .padding(vertical = 12.dp, horizontal = 16.dp) 
             ) {
-                val alpha = if (isSelected) 1f else 0.5f
+                val alpha = if (isSelected) 1f else 0.4f
                 val speedText = "${speed.toString().removeSuffix(".0")}X"
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = if (isRewind) Arrangement.Start else Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -742,10 +769,11 @@ fun EdgeSpeedOverlay(
                             Spacer(modifier = Modifier.width(4.dp))
                         }
                         Text(
-                            text = "$speedText Speed",
+                            text = speedText,
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                         if (isRewind) {
                             Spacer(modifier = Modifier.width(4.dp))
@@ -756,7 +784,8 @@ fun EdgeSpeedOverlay(
                             text = speedText,
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White.copy(alpha = alpha),
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
                         )
                     }
                 }

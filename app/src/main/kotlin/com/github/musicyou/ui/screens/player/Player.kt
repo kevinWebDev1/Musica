@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,11 +65,22 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.AvTimer
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Subtitles
+import androidx.compose.material.icons.outlined.ClosedCaption
+import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.OutlinedTextField
 import kotlinx.coroutines.flow.firstOrNull
+
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.github.musicyou.utils.rememberPreference
 import com.github.musicyou.utils.videoResizeModeKey
@@ -144,9 +156,22 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.media3.common.util.UnstableApi
 import com.github.musicyou.enums.VideoQuality
 import com.github.musicyou.sync.protocol.*
+import com.github.musicyou.sync.session.SessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyRowState
 import kotlinx.coroutines.withContext
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+import androidx.compose.material.icons.filled.Add
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(
@@ -169,6 +194,11 @@ fun Player(
     val nullableMediaItem = hybridPlaybackState.mediaItem ?: binder.player.currentMediaItem
     
     val isYouTube = nullableMediaItem?.mediaId?.startsWith("youtube-embed:") == true
+    val flashContext = when {
+        isYouTube -> "youtube"
+        nullableMediaItem?.mediaId?.let { it.startsWith("content://") || it.startsWith("file://") || it.startsWith("/") } == true -> "local"
+        else -> "music"
+    }
 
     val shouldBePlaying = hybridPlaybackState.isPlaying
 
@@ -200,7 +230,10 @@ fun Player(
     var isQueueOpen by rememberSaveable { mutableStateOf(false) }
     var showSubtitlesSheet by rememberSaveable { mutableStateOf(false) }
     var showAudioSheet by rememberSaveable { mutableStateOf(false) }
+    var showFlashMessageSheet by rememberSaveable { mutableStateOf(false) }
+    var showEmojiPickerSheet by rememberSaveable { mutableStateOf(false) }
     var isShowingSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
+
     var isShowingSyncSheet by rememberSaveable { mutableStateOf(false) }
     var isShowingSpeedDialog by rememberSaveable { mutableStateOf(false) }
     var isShowingQualityDialog by rememberSaveable { mutableStateOf(false) }
@@ -230,6 +263,13 @@ fun Player(
     var baselineSpeed by rememberSaveable { mutableStateOf(1f) }
     var activeSpeed by rememberSaveable { mutableStateOf(1f) }
     var isSpeedGestureActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(syncSessionState.playbackSpeed) {
+        if (baselineSpeed != syncSessionState.playbackSpeed) {
+            baselineSpeed = syncSessionState.playbackSpeed
+            activeSpeed = syncSessionState.playbackSpeed
+        }
+    }
 
     LaunchedEffect(areControlsVisible, isFullScreen) {
         if (areControlsVisible && isFullScreen) {
@@ -310,8 +350,8 @@ fun Player(
     // --- SOCIAL INTERACTION STATE ---
     val sessionManager = binder?.sessionManager
     
-    // DEBUG: Ping tracker (Display integrated into status bar)
-    val currentPing = syncSessionState.ping
+    // DEBUG: Drift tracker (Display integrated into status bar)
+    val currentDrift = syncSessionState.drift
     
     var lastReaction by remember { mutableStateOf<ReactionEvent?>(null) }
     var lastFlashMessage by remember { mutableStateOf<FlashMessageEvent?>(null) }
@@ -352,101 +392,16 @@ fun Player(
                     .padding(horizontal = 32.dp)
                     .padding(bottom = 8.dp)
             ) {
-                 Row(
-                     verticalAlignment = Alignment.CenterVertically,
-                     horizontalArrangement = Arrangement.Center,
-                     modifier = Modifier
-                         .neumorphicBasin(cornerRadius = 24.dp)
-                         .padding(horizontal = 16.dp, vertical = 6.dp)
-                 ) {
-                     val count = syncSessionState.connectedPeers.size
-                     val statusColor = if (count == 0) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
-                     
-                     val pingText = if (currentPing != null && currentPing > 0) "📍 ${currentPing}ms" else ""
-                     val pingColor =
-                         if (currentPing != null && currentPing > 800)
-                             MaterialTheme.colorScheme.error
-                         else
-                             Color(0xFF2E7D32)
+                DynamicSyncStatusPill(
+                    syncSessionState = syncSessionState,
+                    currentDrift = currentDrift,
+                    currentMediaId = mediaItem?.mediaId
+                )
 
-                     if (syncSessionState.isHost) {
-                         Icon(
-                             imageVector = Icons.Filled.FiberManualRecord,
-                             contentDescription = "Live",
-                             tint = statusColor,
-                             modifier = Modifier.size(10.dp)
-                         )
-                          Spacer(modifier = Modifier.width(6.dp))
-                          
-                          // HOST VIEW: Live Session: [GroupIcon] [Count] [Ping]
-                          Text(
-                              text = "Live Session:",
-                              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                              color = statusColor
-                          )
-                          val participantText = when (count) {
-                              0 -> "no one connected"
-                              1 -> "1 user connected"
-                              else -> "$count users connected"
-                          }
-                          Text(
-                              text = participantText,
-                              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                              color = statusColor
-                          )
-
-                          if (pingText.isNotEmpty()) {
-                              Spacer(modifier = Modifier.width(8.dp))
-                              Text(
-                                  text = pingText,
-                                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                  color = pingColor
-                              )
-                          }
-                      } else {
-                          Icon(
-                              imageVector = Icons.Filled.Link,
-                              contentDescription = "Linked",
-                              tint = statusColor,
-                              modifier = Modifier.size(12.dp)
-                          )
-                           Spacer(modifier = Modifier.width(6.dp))
-                           
-                          // GUEST VIEW: Synced with Host [Icon] [Count] [Ping]
-                          Row(
-                              verticalAlignment = Alignment.CenterVertically,
-                              modifier = Modifier.basicMarquee()
-                          ) {
-                              Text(
-                                 text = "Synced with Host",
-                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                 color = statusColor
-                              )
-                              Spacer(modifier = Modifier.width(8.dp))
-                              val participantText = when (count) {
-                                  0 -> "no one connected"
-                                  1 -> "1 user connected"
-                                  else -> "$count users connected"
-                              }
-                              Text(
-                                  text = participantText,
-                                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                  color = statusColor
-                              )
-                              if (pingText.isNotEmpty()) {
-                                  Spacer(modifier = Modifier.width(8.dp))
-                                  Text(
-                                      text = pingText,
-                                      style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                      color = pingColor
-                                  )
-                              }
-                          }
-                      }
-                 }
             }
         }
     }
+
     
 
 
@@ -473,9 +428,17 @@ fun Player(
             // SOCIAL: Interaction Triggers (Always visible in Sync Session, even if Locked)
             if (sessionManager != null && syncSessionState.sessionId != null) {
                 Spacer(modifier = Modifier.height(10.dp))
-                ReactionRow(onEmojiSelected = { sessionManager.sendReaction(it) })
+                ReactionRow(
+                    onEmojiSelected = { sessionManager.sendReaction(it) },
+                    onShowEmojiPicker = { showEmojiPickerSheet = true }
+                )
                 Spacer(modifier = Modifier.height(6.dp))
-                FlashMessageRow(onMessageSelected = { sessionManager.sendFlashMessage(it) })
+                FlashMessageRow(
+                    contextType = flashContext,
+                    onMessageSelected = { sessionManager.sendFlashMessage(it) },
+                    onOpenHub = { showFlashMessageSheet = true }
+                )
+
                 Spacer(modifier = Modifier.height(4.dp))
             }
             
@@ -512,20 +475,28 @@ fun Player(
         val isYouTube = remember(mediaItem) {
             mediaItem.mediaId.startsWith("youtube-embed:")
         }
-        val isVideo = remember(mediaItem, syncSessionState.localMatchUri, mediaItem.mediaMetadata.extras?.getBoolean("forceVideo"), isYouTube) {
+        val isVideo = remember(mediaItem, syncSessionState.localMatchUri, mediaItem.mediaMetadata.extras?.getBoolean("forceVideo"), mediaItem.mediaMetadata.extras?.getBoolean("isLocal"), isYouTube) {
             val path = syncSessionState.localMatchUri ?: mediaItem.mediaId
             val title = mediaItem.mediaMetadata.title?.toString() ?: ""
             val isVid = isYouTube || 
+                    path.startsWith("youtube-video:") ||
                     path.endsWith(".mp4", ignoreCase = true) ||
                     path.endsWith(".mkv", ignoreCase = true) ||
                     path.endsWith(".mov", ignoreCase = true) ||
                     path.endsWith(".webm", ignoreCase = true) ||
+                    path.endsWith(".m3u8", ignoreCase = true) ||
+                    path.endsWith(".mpd", ignoreCase = true) ||
+                    path.contains("index_web", ignoreCase = true) ||
                     path.contains("video", ignoreCase = true) ||
                     title.endsWith(".mp4", ignoreCase = true) ||
                     title.endsWith(".mkv", ignoreCase = true) ||
                     title.endsWith(".mov", ignoreCase = true) ||
                     title.endsWith(".webm", ignoreCase = true) ||
-                    mediaItem.mediaMetadata.extras?.getBoolean("forceVideo") == true
+                    title.endsWith(".m3u8", ignoreCase = true) ||
+                    title.endsWith(".mpd", ignoreCase = true) ||
+                    title.contains("index_web", ignoreCase = true) ||
+                    mediaItem.mediaMetadata.extras?.getBoolean("forceVideo") == true ||
+                    mediaItem.mediaMetadata.extras?.getBoolean("isLocal") == true
             
             android.util.Log.d("YouTubeSearch", "Player.kt computed isVideo=$isVid for mediaId=${mediaItem.mediaId}, path=$path, forceVideo=${mediaItem.mediaMetadata.extras?.getBoolean("forceVideo")}")
             isVid
@@ -698,10 +669,10 @@ fun Player(
                                     if (!isFullScreen && areControlsVisible && !isLocked) {
                                         Row(
                                             modifier = Modifier.padding(8.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            // Rotation Button
-                                            IconButton(
+                                            PlayerControlButton(
+                                                icon = Icons.Rounded.ScreenRotation,
                                                 onClick = { 
                                                     val activity = context.findActivity()
                                                     if (activity != null) {
@@ -712,42 +683,18 @@ fun Player(
                                                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                                         }
                                                     }
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.ScreenRotation,
-                                                    contentDescription = "Rotate Screen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                                }
+                                            )
                                             
-                                            // Fullscreen Button
-                                            IconButton(
-                                                onClick = { isFullScreen = true },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Fullscreen,
-                                                    contentDescription = "Enter Fullscreen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                text = "Lock",
+                                                onClick = { isLocked = !isLocked }
+                                            )
 
-                                            // Lock Button
-                                            IconButton(
-                                                onClick = { isLocked = !isLocked },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
-                                                    contentDescription = "Lock",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.Fullscreen,
+                                                onClick = { isFullScreen = true }
+                                            )
                                         }
                                     }
                                 }
@@ -767,45 +714,59 @@ fun Player(
                                         },
                                         onSpeedChange = { 
                                             activeSpeed = it
-                                            binder.player.setPlaybackSpeed(it) 
+                                            binder.syncSetPlaybackSpeed(it) 
                                         },
                                         isLocked = isLocked,
                                         onLockedChange = { 
                                             isLocked = it
                                             if (!it) areControlsVisible = true
                                         },
-                                        baselineSpeed = baselineSpeed
+                                        baselineSpeed = baselineSpeed,
+                                        resizeMode = videoResizeMode,
+                                        onResizeModeChange = { videoResizeMode = it }
                                     )
                                     if (!isFullScreen) {
                                         Row(
                                             modifier = Modifier.padding(8.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            // Quality Toggle (YouTube only)
                                             if (isYouTube) {
-                                                IconButton(
-                                                    onClick = { isShowingQualityDialog = true },
-                                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                                ) {
-                                                    val qualityText = when (videoQuality) {
-                                                        VideoQuality.AUTO -> "Auto"
-                                                        VideoQuality.QUALITY_360P -> "360p"
-                                                        VideoQuality.QUALITY_720P -> "720p"
-                                                        VideoQuality.QUALITY_1080P -> "1080p"
-                                                        VideoQuality.QUALITY_1440P -> "1440p"
-                                                        VideoQuality.QUALITY_2160P -> "2160p"
-                                                    }
-                                                    Text(
-                                                        text = qualityText,
-                                                        color = Color.White,
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                val qualityText = when (videoQuality) {
+                                                    VideoQuality.AUTO -> "Auto"
+                                                    VideoQuality.QUALITY_360P -> "360p"
+                                                    VideoQuality.QUALITY_720P -> "720p"
+                                                    VideoQuality.QUALITY_1080P -> "1080p"
+                                                    VideoQuality.QUALITY_1440P -> "1440p"
+                                                    VideoQuality.QUALITY_2160P -> "2160p"
                                                 }
+                                                PlayerControlButton(
+                                                    text = qualityText,
+                                                    subText = "Quality",
+                                                    onClick = { isShowingQualityDialog = true }
+                                                )
                                             }
 
-                                            // Rotation Button
-                                            IconButton(
+                                            PlayerControlButton(
+                                                text = "${baselineSpeed}x",
+                                                subText = "Speed",
+                                                onClick = {
+                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
+                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
+                                                    baselineSpeed = availableSpeeds[nextIndex]
+                                                    activeSpeed = baselineSpeed
+                                                    binder.syncSetPlaybackSpeed(baselineSpeed)
+                                                }
+                                            )
+
+                                            PlayerControlButton(
+                                                text = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) "Zoom" else "Fit",
+                                                onClick = {
+                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                                }
+                                            )
+
+                                            PlayerControlButton(
+                                                icon = Icons.Rounded.ScreenRotation,
                                                 onClick = { 
                                                     val activity = context.findActivity()
                                                     if (activity != null) {
@@ -816,76 +777,18 @@ fun Player(
                                                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                                         }
                                                     }
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.ScreenRotation,
-                                                    contentDescription = "Rotate Screen",
-                                                    tint = Color.White
-                                                )
-                                            }
-                                            
-                                            // Zoom/Fit Toggle
-                                            IconButton(
-                                                onClick = {
-                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                                },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Crop,
-                                                    contentDescription = "Toggle Zoom",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                                }
+                                            )
 
-                                            // Fullscreen Button
-                                            IconButton(
-                                                onClick = { isFullScreen = true },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Fullscreen,
-                                                    contentDescription = "Enter Fullscreen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                text = "Lock",
+                                                onClick = { isLocked = !isLocked }
+                                            )
 
-                                            // Speed Toggle
-                                            IconButton(
-                                                onClick = {
-                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
-                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
-                                                    baselineSpeed = availableSpeeds[nextIndex]
-                                                    activeSpeed = baselineSpeed
-                                                    binder.player.setPlaybackSpeed(baselineSpeed)
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Text(
-                                                    text = "${baselineSpeed}x",
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
-                                            // Lock Button
-                                            IconButton(
-                                                onClick = { isLocked = !isLocked },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
-                                                    contentDescription = "Lock",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.Fullscreen,
+                                                onClick = { isFullScreen = true }
+                                            )
                                         }
                                     }
                                 }
@@ -944,10 +847,10 @@ fun Player(
                                             modifier = Modifier
                                                 .align(Alignment.BottomEnd)
                                                 .padding(bottom = 16.dp, end = 24.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            // Rotation Button
-                                            IconButton(
+                                            PlayerControlButton(
+                                                icon = Icons.Rounded.ScreenRotation,
                                                 onClick = { 
                                                     val activity = context.findActivity()
                                                     if (activity != null) {
@@ -958,42 +861,18 @@ fun Player(
                                                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                                         }
                                                     }
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.ScreenRotation,
-                                                    contentDescription = "Rotate Screen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                                }
+                                            )
 
-                                            // Lock Button
-                                            IconButton(
-                                                onClick = { isLocked = !isLocked },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
-                                                    contentDescription = "Lock",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                text = "Lock",
+                                                onClick = { isLocked = !isLocked }
+                                            )
 
-                                            // Fullscreen Button
-                                            IconButton(
-                                                onClick = { isFullScreen = true },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Fullscreen,
-                                                    contentDescription = "Enter Fullscreen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.Fullscreen,
+                                                onClick = { isFullScreen = true }
+                                            )
                                         }
                                     }
                                 }
@@ -1013,14 +892,16 @@ fun Player(
                                         },
                                         onSpeedChange = { 
                                             activeSpeed = it
-                                            binder.player.setPlaybackSpeed(it) 
+                                            binder.syncSetPlaybackSpeed(it) 
                                         },
                                         isLocked = isLocked,
                                         onLockedChange = { 
                                             isLocked = it
                                             if (!it) areControlsVisible = true
                                         },
-                                        baselineSpeed = baselineSpeed
+                                        baselineSpeed = baselineSpeed,
+                                        resizeMode = videoResizeMode,
+                                        onResizeModeChange = { videoResizeMode = it }
                                     )
                                     if (!isFullScreen) {
                                         // Top Right Controls (Subtitles, Audio)
@@ -1031,28 +912,16 @@ fun Player(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             // Subtitles
-                                            IconButton(
-                                                onClick = { showSubtitlesSheet = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Subtitles,
-                                                    contentDescription = "Subtitles",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.ClosedCaption,
+                                                onClick = { showSubtitlesSheet = true }
+                                            )
                                             
                                             // Audio Track
-                                            IconButton(
-                                                onClick = { showAudioSheet = true },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Audiotrack,
-                                                    contentDescription = "Audio Track",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.Audiotrack,
+                                                onClick = { showAudioSheet = true }
+                                            )
                                         }
 
                                         // Bottom Right Controls (Rotate, Lock, Fullscreen)
@@ -1060,33 +929,45 @@ fun Player(
                                             modifier = Modifier
                                                 .align(Alignment.BottomEnd)
                                                 .padding(bottom = 16.dp, end = 24.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            // Quality Toggle (YouTube only)
                                             if (isYouTube) {
-                                                IconButton(
-                                                    onClick = { isShowingQualityDialog = true },
-                                                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                                ) {
-                                                    val qualityText = when (videoQuality) {
-                                                        VideoQuality.AUTO -> "Auto"
-                                                        VideoQuality.QUALITY_360P -> "360p"
-                                                        VideoQuality.QUALITY_720P -> "720p"
-                                                        VideoQuality.QUALITY_1080P -> "1080p"
-                                                        VideoQuality.QUALITY_1440P -> "1440p"
-                                                        VideoQuality.QUALITY_2160P -> "2160p"
-                                                    }
-                                                    Text(
-                                                        text = qualityText,
-                                                        color = Color.White,
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                val qualityText = when (videoQuality) {
+                                                    VideoQuality.AUTO -> "Auto"
+                                                    VideoQuality.QUALITY_360P -> "360p"
+                                                    VideoQuality.QUALITY_720P -> "720p"
+                                                    VideoQuality.QUALITY_1080P -> "1080p"
+                                                    VideoQuality.QUALITY_1440P -> "1440p"
+                                                    VideoQuality.QUALITY_2160P -> "2160p"
                                                 }
+                                                PlayerControlButton(
+                                                    text = qualityText,
+                                                    subText = "Quality",
+                                                    onClick = { isShowingQualityDialog = true }
+                                                )
                                             }
 
-                                            // Rotation Button
-                                            IconButton(
+                                            PlayerControlButton(
+                                                text = "${baselineSpeed}x",
+                                                subText = "Speed",
+                                                onClick = {
+                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
+                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
+                                                    baselineSpeed = availableSpeeds[nextIndex]
+                                                    activeSpeed = baselineSpeed
+                                                    binder.syncSetPlaybackSpeed(baselineSpeed)
+                                                }
+                                            )
+
+                                            PlayerControlButton(
+                                                text = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) "Zoom" else "Fit",
+                                                onClick = {
+                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                                }
+                                            )
+
+                                            PlayerControlButton(
+                                                icon = Icons.Rounded.ScreenRotation,
                                                 onClick = { 
                                                     val activity = context.findActivity()
                                                     if (activity != null) {
@@ -1097,76 +978,18 @@ fun Player(
                                                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                                         }
                                                     }
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.ScreenRotation,
-                                                    contentDescription = "Rotate Screen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                                }
+                                            )
 
-                                            // Speed Toggle
-                                            IconButton(
-                                                onClick = {
-                                                    val currentIndex = availableSpeeds.indexOf(baselineSpeed)
-                                                    val nextIndex = (currentIndex + 1) % availableSpeeds.size
-                                                    baselineSpeed = availableSpeeds[nextIndex]
-                                                    activeSpeed = baselineSpeed
-                                                    binder.player.setPlaybackSpeed(baselineSpeed)
-                                                },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Text(
-                                                    text = "${baselineSpeed}x",
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                text = "Lock",
+                                                onClick = { isLocked = !isLocked }
+                                            )
 
-                                            // Lock Button
-                                            IconButton(
-                                                onClick = { isLocked = !isLocked },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isLocked) Icons.Filled.Lock else Icons.Default.LockOpen,
-                                                    contentDescription = "Lock",
-                                                    tint = Color.White
-                                                )
-                                            }
-
-                                            // Zoom/Fit Toggle
-                                            IconButton(
-                                                onClick = {
-                                                    videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                                },
-                                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Crop,
-                                                    contentDescription = "Toggle Zoom",
-                                                    tint = Color.White
-                                                )
-                                            }
-
-                                            // Fullscreen Button
-                                            IconButton(
-                                                onClick = { isFullScreen = true },
-                                                modifier = Modifier
-                                                    .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Fullscreen,
-                                                    contentDescription = "Enter Fullscreen",
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            PlayerControlButton(
+                                                icon = Icons.Outlined.Fullscreen,
+                                                onClick = { isFullScreen = true }
+                                            )
                                         }
                                     }
                                 }
@@ -1176,6 +999,7 @@ fun Player(
                                 )
                             }
                         }
+
 
                         if (!fullScreenLyrics && !isFullScreen) {
                             controlsContent(
@@ -1189,10 +1013,14 @@ fun Player(
                 }
 
                 // Fullscreen Overlay Controls
+                val isBuffering = hybridPlaybackState.playbackState == com.github.musicyou.sync.playback.PlaybackState.STATE_BUFFERING ||
+                    (!isYouTube && binder.player.playbackState == androidx.media3.common.Player.STATE_BUFFERING)
+
                 if (isFullScreen && (areControlsVisible || isSpeedGestureActive) && !isLocked) {
                     FullscreenControls(
                         areControlsVisible = areControlsVisible || isSpeedGestureActive,
                         isPlaying = shouldBePlaying,
+                        isBuffering = isBuffering,
                         isYouTube = isYouTube,
                         onExitFullscreen = { isFullScreen = false },
                         position = positionAndDuration.first,
@@ -1209,7 +1037,7 @@ fun Player(
                             val nextIndex = (currentIndex + 1) % availableSpeeds.size
                             baselineSpeed = availableSpeeds[nextIndex]
                             activeSpeed = baselineSpeed
-                            binder.player.setPlaybackSpeed(baselineSpeed)
+                            binder.syncSetPlaybackSpeed(baselineSpeed)
                         },
                         onShowQuality = { isShowingQualityDialog = true },
                         videoQualityText = when (videoQuality) {
@@ -1223,10 +1051,17 @@ fun Player(
                         videoResizeMode = videoResizeMode,
                         onToggleZoom = {
                             videoResizeMode = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        }
+                        },
+                        syncSessionState = syncSessionState,
+                        currentDrift = currentDrift,
+                        currentMediaId = mediaItem?.mediaId,
+                        isLocalVideo = isLocalItem,
+                        onShowFlashMessages = { showFlashMessageSheet = true },
+                        onShowEmojiPicker = { showEmojiPickerSheet = true }
                     )
                 }
             }
+
 
             if (!isFullScreen) {
                 Column(
@@ -1281,14 +1116,14 @@ fun Player(
                             Box(
                                 modifier = Modifier
                                     .size(52.dp)
-                                    .clip(CircleShape)
                                     .background(
                                         brush = androidx.compose.ui.graphics.Brush.linearGradient(
                                             colors = listOf(
                                                 MaterialTheme.colorScheme.primary,
                                                 MaterialTheme.colorScheme.tertiary
                                             )
-                                        )
+                                        ),
+                                        shape = CircleShape
                                     )
                                     .clickable { isShowingSyncSheet = true },
                                 contentAlignment = Alignment.Center
@@ -1299,6 +1134,21 @@ fun Player(
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(26.dp)
                                 )
+                                
+                                // Subtle Connection/Resyncing Indicator
+                                if (syncSessionState.sessionId != null) {
+                                    val isResyncing = syncSessionState.clockSyncMessage == "Resyncing..."
+                                    val dotColor = if (isResyncing) androidx.compose.ui.graphics.Color(0xFFFFA500) else androidx.compose.ui.graphics.Color.Green
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .offset(x = (-2).dp, y = 2.dp)
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(dotColor)
+                                            .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                    )
+                                }
                             }
 
                             // Download Button (Hide for local items to prevent crowding)
@@ -1422,7 +1272,7 @@ fun Player(
                         speeds.forEach { speed ->
                             TextButton(
                                 onClick = {
-                                    binder.player.setPlaybackSpeed(speed)
+                                    binder.syncSetPlaybackSpeed(speed)
                                     isShowingSpeedDialog = false
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -1512,6 +1362,78 @@ fun Player(
             )
         }
         
+        if (showFlashMessageSheet) {
+            FlashMessageHubSheet(
+                contextType = flashContext,
+                onSendMessage = { binder.sessionManager.sendFlashMessage(it) },
+                onDismiss = { showFlashMessageSheet = false }
+            )
+        }
+
+        if (showEmojiPickerSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showEmojiPickerSheet = false },
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 32.dp, top = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Send Emoji Reaction",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    val extendedEmojis = listOf(
+                        "❤️", "🔥", "🙌", "😭", "😮", "🕺", "✨", "💯",
+                        "😀", "😅", "😂", "🤣", "🥲", "😊", "😇", "🙃",
+                        "😍", "🥰", "😘", "😋", "😜", "🤪", "😎", "🤩",
+                        "🥳", "😏", "😒", "😔", "😕", "🥺", "😢", "😤",
+                        "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨",
+                        "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😬",
+                        "🙄", "🥱", "😴", "🤤", "😵", "🤐", "🥴", "🤢",
+                        "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈",
+                        "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "👽",
+                        "👾", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼",
+                        "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎",
+                        "💔", "❣️", "💕", "💞", "💓", "💗", "💖", "💘",
+                        "💝", "❤️‍🔥", "❤️‍🩹", "💢", "💥", "💫", "💦", "💨",
+                        "👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤌", "🤏",
+                        "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆",
+                        "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛",
+                        "🤜", "👏", "👐", "🤲", "🤝", "🙏", "💪", "👀"
+                    )
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(extendedEmojis.size) { index ->
+                            val emoji = extendedEmojis[index]
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        binder.sessionManager.sendReaction(emoji)
+                                        showEmojiPickerSheet = false
+                                    }
+                            ) {
+                                Text(text = emoji, fontSize = 28.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // SOCIAL: Top layer (Floating Emojis & Cards)
         Box(modifier = Modifier.fillMaxSize().zIndex(100f)) {
             ReactionOverlay(event = lastReaction)
@@ -1526,7 +1448,375 @@ fun Player(
 }
 
 @Composable
-fun ReactionRow(onEmojiSelected: (String) -> Unit) {
+fun DynamicSyncStatusPill(
+    syncSessionState: SessionState,
+    currentDrift: Long?,
+    currentMediaId: String?,
+    isLocalVideo: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val isVideo = (currentMediaId != null && (
+        currentMediaId.startsWith("youtube-embed:") ||
+        currentMediaId.endsWith(".mp4", ignoreCase = true) ||
+        currentMediaId.endsWith(".mkv", ignoreCase = true) ||
+        currentMediaId.endsWith(".mov", ignoreCase = true) ||
+        currentMediaId.endsWith(".webm", ignoreCase = true) ||
+        currentMediaId.endsWith(".m3u8", ignoreCase = true) ||
+        currentMediaId.endsWith(".mpd", ignoreCase = true) ||
+        currentMediaId.contains("index_web", ignoreCase = true) ||
+        currentMediaId.contains("video", ignoreCase = true)
+    )) || isLocalVideo || syncSessionState.localMatchUri != null
+
+    val count = syncSessionState.connectedPeers.size
+    val statusColor = if (count == 0) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+    
+    val pingDisplay = if (currentDrift != null && currentDrift > 0) "⚡ Δ${currentDrift}ms" else ""
+    val pingColor =
+        if (currentDrift != null && currentDrift > 1500)
+            MaterialTheme.colorScheme.error
+        else
+            Color(0xFF2E7D32)
+
+    val countText = when (count) {
+        0 -> if (isVideo) "no one watching" else "no one listening"
+        1 -> if (isVideo) "1 watching" else "1 listening"
+        else -> if (isVideo) "$count watching" else "$count listening"
+    }
+
+    val mainText = if (syncSessionState.isHost) {
+        if (isVideo) "🍿 Watching Video • $countText" else "🎧 Listening to Music • $countText"
+    } else {
+        if (isVideo) "🍿 Synced with Host • Watching Video" else "🎧 Synced with Host • Listening to Music"
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.12f), shape = RoundedCornerShape(24.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+        Icon(
+            imageVector = if (syncSessionState.isHost) Icons.Filled.FiberManualRecord else Icons.Filled.Link,
+            contentDescription = "Status",
+            tint = statusColor,
+            modifier = Modifier.size(10.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        
+        Text(
+            text = mainText,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            color = statusColor,
+            maxLines = 1
+        )
+
+        if (pingDisplay.isNotEmpty()) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = pingDisplay,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = pingColor,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+val commonPlaybackPresets = listOf(
+    // Playback
+    "Toggle play/pause ⏯️", "Replay that 🔁", "Skip intro ⏭️",
+
+    // Speed
+    "Speed it up ⏩", "Normal speed ▶️",
+
+    // Audio
+    "Can't hear you 🎧",
+
+    // Sync
+    "Am I behind? 🤔", "Out of sync? 🔄", "Resync pls 🔁",
+
+    // IRL
+    "One sec 📱", "Brb 2 min 🚻",
+
+    // Seek
+    "Rewind 10s ⏪", "Forward 10s ⏩",
+    "More Rewind 10s ⏪", "More Forward 10s ⏩"
+)
+
+fun getContextFlashMessages(contextType: String): List<String> {
+    return when (contextType) {
+        "local" -> listOf(
+            "Wait wait wait ✋", "LMAOOO 😂😂", "NO WAY 😱", "Pause, I'm crying 💀",
+            "This scene is peak 🍿", "No way, what just happened 🤯", "Wait, who is this again? 🤔",
+            "Yoo — plot twist incoming ⏸️", "This is why I love this movie ❤️", "What a shot! 🎬"
+        )
+
+        "youtube" -> listOf(
+            "This part is gold 🏆",
+            "Rate this 1-10 ⭐",
+            "LMAOOO 😂😂",
+            "Wait, what did they say? 🗣️",
+            "Check this out! 🤯",
+            "Old is gold",
+            "This hits different 💔",
+            "Singing along 🎤",
+            "Give it a chance 🎧",
+            "First time hearing 👂",
+            "Good pick 👌"
+        )
+
+        else -> listOf(
+            "Goosebumps ✨", "Vibing hard 🕺", "This hits different 💔", "Therapy in audio 🧘",
+            "Singing along 🎤", "Add to playlist ➕", "See the Lyrics 📝", "First time hearing 👂",
+            "Underrated fr 📉", "This is OUR song 🫶", "Your taste tho 🔥",
+            "My turn to pick song 🎲", "Missed listening together 🫂",
+            "Nice song 🎶", "My favorite song ❤️", "I like this song 👍", "Best lines 🔥"
+        )
+    }
+}
+
+fun getDefaultFlashMessages(contextType: String): List<String> {
+    return getContextFlashMessages(contextType) + commonPlaybackPresets
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FlashMessageHubSheet(
+    contextType: String,
+    onSendMessage: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var textInput by remember { mutableStateOf("") }
+    var isEditMode by remember { mutableStateOf(false) }
+    
+    val contextDefaultPresets = getContextFlashMessages(contextType)
+    
+    var savedCustomPresetsStr by com.github.musicyou.utils.rememberPreference("saved_flash_presets_$contextType", "")
+    var currentPresets by remember(savedCustomPresetsStr) {
+        mutableStateOf(
+            if (savedCustomPresetsStr.isBlank()) contextDefaultPresets
+            else {
+                val loaded = savedCustomPresetsStr.split("|||").filter { it.isNotBlank() }
+                loaded + contextDefaultPresets.filter { !loaded.contains(it) }
+            }
+        )
+    }
+    
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⚡ Flash Messages",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                TextButton(onClick = { isEditMode = !isEditMode }) {
+                    Icon(
+                        imageVector = if (isEditMode) Icons.Filled.Check else Icons.Filled.Edit,
+                        contentDescription = "Edit Presets",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(text = if (isEditMode) "Done" else "Edit Presets")
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            OutlinedTextField(
+                value = textInput,
+                onValueChange = { textInput = it },
+                placeholder = { Text("Type any quick message...") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (textInput.isNotBlank()) {
+                            val trimmed = textInput.trim()
+                            val isSaved = currentPresets.contains(trimmed)
+                            
+                            IconButton(onClick = {
+                                if (trimmed.isNotEmpty()) {
+                                    val updatedList = if (isSaved) {
+                                        currentPresets.filter { it != trimmed }
+                                    } else {
+                                        listOf(trimmed) + currentPresets
+                                    }
+                                    currentPresets = updatedList
+                                    savedCustomPresetsStr = updatedList.joinToString("|||")
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = if (isSaved) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                    contentDescription = if (isSaved) "Remove Preset" else "Save Preset",
+                                    tint = Color(0xFFFFC107)
+                                )
+                            }
+                            
+                            IconButton(onClick = {
+                                val trimmed = textInput.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    onSendMessage(trimmed)
+                                    textInput = ""
+                                    onDismiss()
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send Instantly",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text(
+                text = "Preset Messages (One-Tap)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val allPresets = currentPresets
+            
+            val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+            
+            val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+                val fromIndex = from.index
+                val toIndex = to.index
+                // Allow reordering all presets
+                val list = currentPresets.toMutableList()
+                val item = list.removeAt(fromIndex)
+                list.add(toIndex, item)
+                currentPresets = list
+                savedCustomPresetsStr = list.joinToString("|||")
+            }
+
+            androidx.compose.foundation.lazy.LazyRow(
+                state = lazyListState,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(
+                    count = allPresets.size,
+                    key = { index -> "preset_${allPresets[index]}" }
+                ) { index ->
+                    val msg = allPresets[index]
+                    val isCustom = true
+                    
+                    ReorderableItem(
+                        state = reorderableState,
+                        key = "preset_$msg"
+                    ) { isDragging ->
+                        val elevation by androidx.compose.animation.core.animateDpAsState(if (isDragging) 8.dp else 0.dp)
+                        
+                        Surface(
+                            color = if (isCustom) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = RoundedCornerShape(12.dp),
+                            shadowElevation = elevation,
+                            modifier = Modifier.clickable {
+                                if (!isEditMode) {
+                                    onSendMessage(msg)
+                                    onDismiss()
+                                }
+                            }.then(if (isEditMode) Modifier.draggableHandle() else Modifier)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = msg,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isCustom) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                                
+                                if (isEditMode) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Remove Preset",
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable {
+                                                val updatedList = currentPresets.filter { it != msg }
+                                                currentPresets = updatedList
+                                                savedCustomPresetsStr = updatedList.joinToString("|||")
+                                            },
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text(
+                text = "Common Playback Controls",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(
+                    count = commonPlaybackPresets.size,
+                    key = { index -> "common_${commonPlaybackPresets[index]}" }
+                ) { index ->
+                    val msg = commonPlaybackPresets[index]
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.clickable {
+                            onSendMessage(msg)
+                            onDismiss()
+                        }
+                    ) {
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+fun ReactionRow(onEmojiSelected: (String) -> Unit, onShowEmojiPicker: (() -> Unit)? = null) {
     val emojis = listOf("❤️", "🔥", "🙌", "😭", "😮", "🕺", "✨", "💯")
     val neumorphicColors = com.github.musicyou.ui.styling.rememberNeumorphicColors()
     Box(
@@ -1538,8 +1828,10 @@ fun ReactionRow(onEmojiSelected: (String) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .neumorphicBasin(cornerRadius = 24.dp)
+                .horizontalScroll(androidx.compose.foundation.rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             emojis.forEach { emoji ->
                 Text(
@@ -1551,45 +1843,59 @@ fun ReactionRow(onEmojiSelected: (String) -> Unit) {
                         .padding(4.dp)
                 )
             }
+            if (onShowEmojiPicker != null) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "More Emojis",
+                    tint = Color.Gray,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onShowEmojiPicker() }
+                        .padding(4.dp)
+                        .size(24.dp)
+                )
+            }
         }
     }
 }
 
 @Composable
-fun FlashMessageRow(onMessageSelected: (String) -> Unit) {
-    var showCustomMsgDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    var customMsgText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
-
-    val messages = listOf(
-        "Custom Msg 💬",
-        "I LOVE this track 😭🔥",
-        "Favorite song!!",
-        "Skip this one 🙅",
-        "Dancing rn 💃",
-        "Singing along 🎤",
-        "Next song pls ⏭️",
-        "Hits different 🥺",
-        "LOVE this part 😍"
-    )
+fun FlashMessageRow(
+    contextType: String,
+    onMessageSelected: (String) -> Unit,
+    onOpenHub: (() -> Unit)? = null
+) {
+    val savedCustomPresetsStr by com.github.musicyou.utils.observePreference("saved_flash_presets_$contextType", "")
+    val defaultPresets = getDefaultFlashMessages(contextType)
+    val savedCustomPresets = remember(savedCustomPresetsStr) {
+        if (savedCustomPresetsStr.isBlank()) defaultPresets
+        else {
+            val loaded = savedCustomPresetsStr.split("|||").filter { it.isNotBlank() }
+            loaded + defaultPresets.filter { !loaded.contains(it) }
+        }
+    }
     
+    val messages = remember(savedCustomPresets) {
+        listOf("Custom Msg ⚡") + savedCustomPresets
+    }
+
     androidx.compose.foundation.lazy.LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), // Reduced from 10dp
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 32.dp)
     ) {
         items(messages.size) { index ->
             val msg = messages[index]
-
-            val isCustom = msg == "Custom Msg 💬"
-            val bg = if (isCustom) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-            val fg = if (isCustom) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+            val isCustomTrigger = msg == "Custom Msg ⚡"
+            val bg = if (isCustomTrigger) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+            val fg = if (isCustomTrigger) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
 
             Surface(
                 color = bg,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.clickable { 
-                    if (isCustom) {
-                        showCustomMsgDialog = true
+                    if (isCustomTrigger && onOpenHub != null) {
+                        onOpenHub()
                     } else {
                         onMessageSelected(msg)
                     }
@@ -1599,58 +1905,14 @@ fun FlashMessageRow(onMessageSelected: (String) -> Unit) {
                     text = msg,
                     color = fg,
                     fontSize = 12.sp,
-                    fontWeight = if (isCustom) androidx.compose.ui.text.font.FontWeight.Bold else null,
+                    fontWeight = if (isCustomTrigger) androidx.compose.ui.text.font.FontWeight.Bold else null,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                 )
             }
         }
     }
-
-    if (showCustomMsgDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showCustomMsgDialog = false },
-            title = { Text("Custom Message") },
-            text = {
-                androidx.compose.material3.OutlinedTextField(
-                    value = customMsgText,
-                    onValueChange = { customMsgText = it },
-                    label = { Text("Type your message...") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Send
-                    ),
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onSend = {
-                            if (customMsgText.isNotBlank()) {
-                                onMessageSelected(customMsgText)
-                                showCustomMsgDialog = false
-                                customMsgText = ""
-                            }
-                        }
-                    )
-                )
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(
-                    onClick = {
-                        if (customMsgText.isNotBlank()) {
-                            onMessageSelected(customMsgText)
-                            showCustomMsgDialog = false
-                            customMsgText = ""
-                        }
-                    }
-                ) {
-                    Text("Send")
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showCustomMsgDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
 }
+
 
 private fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
     is android.app.Activity -> this
@@ -1667,6 +1929,7 @@ fun Modifier.scale(scale: Float): Modifier = this.then(
 fun FullscreenControls(
     areControlsVisible: Boolean,
     isPlaying: Boolean,
+    isBuffering: Boolean = false,
     isYouTube: Boolean = false,
     onExitFullscreen: () -> Unit,
     position: Long,
@@ -1680,214 +1943,388 @@ fun FullscreenControls(
     videoQualityText: String,
     videoResizeMode: Int,
     onToggleZoom: () -> Unit,
+    syncSessionState: SessionState? = null,
+    currentDrift: Long? = null,
+    currentMediaId: String? = null,
+    isLocalVideo: Boolean = false,
+    onShowFlashMessages: (() -> Unit)? = null,
+    onShowEmojiPicker: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    
+    val binder = LocalPlayerServiceBinder.current
+
+    // ── Glass Design Tokens ──
+    val glassColor = Color.White.copy(alpha = 0.12f)
+    val glassBorder = Color.White.copy(alpha = 0.2f)
+    val glassShape = RoundedCornerShape(12.dp)
+    val pillShape = RoundedCornerShape(16.dp)
+    val accentRed = Color(0xFFFF3B30)
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(
-                colors = listOf(
-                    Color.Black.copy(alpha = 0.6f),
-                    Color.Transparent,
-                    Color.Black.copy(alpha = 0.8f)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = 0.35f),
+                        Color.Transparent,
+                        Color.Transparent,
+                        Color.Black.copy(alpha = 0.55f)
+                    )
                 )
-            ))
-            .padding(top = 48.dp, start = 16.dp, end = 16.dp, bottom = 16.dp) // Added top margin for vertical fullscreen
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp)
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {
-        // TOP RIGHT ACTIONS
+        // ══════════════════════════════════════════════
+        // TOP ROW
+        // ══════════════════════════════════════════════
         Row(
-            modifier = Modifier.align(Alignment.TopEnd),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
         ) {
-            // Subtitles
-            IconButton(
-                onClick = onShowSubtitles,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            // ── Left: Status Pill + Flash & Emoji Row BELOW ──
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.Start
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Subtitles,
-                    contentDescription = "Subtitles",
-                    tint = Color.White
-                )
-            }
-            
-            // Audio Track
-            IconButton(
-                onClick = onShowAudio,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Audiotrack,
-                    contentDescription = "Audio Track",
-                    tint = Color.White
-                )
-            }
-
-            // Exit Fullscreen
-            IconButton(
-                onClick = onExitFullscreen,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.FullscreenExit,
-                    contentDescription = "Exit Fullscreen",
-                    tint = Color.White
-                )
-            }
-        }
-        
-        // BOTTOM RIGHT ACTIONS
-        Row(
-            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 56.dp), // Position above the seekbar
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Quality Toggle (YouTube only)
-            if (isYouTube) {
-                IconButton(
-                    onClick = onShowQuality,
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-                ) {
-                    Text(
-                        text = videoQualityText,
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
+                if (syncSessionState != null && syncSessionState.sessionId != null) {
+                    DynamicSyncStatusPill(
+                        syncSessionState = syncSessionState,
+                        currentDrift = currentDrift,
+                        currentMediaId = currentMediaId,
+                        isLocalVideo = isLocalVideo
                     )
+
+                    if (onShowFlashMessages != null || onShowEmojiPicker != null) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (onShowFlashMessages != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(glassColor, pillShape)
+                                        .border(1.dp, glassBorder, pillShape)
+                                        .clip(pillShape)
+                                        .clickable { onShowFlashMessages() }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.FlashOn,
+                                            contentDescription = "Flash Messages",
+                                            tint = Color(0xFFFFD54F),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Flash Message",
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (onShowEmojiPicker != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(glassColor, pillShape)
+                                        .border(1.dp, glassBorder, pillShape)
+                                        .clip(pillShape)
+                                        .clickable { onShowEmojiPicker() }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "😃",
+                                            fontSize = 14.sp
+                                        )
+                                        Text(
+                                            text = "Emoji Reaction",
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Rotation
-            IconButton(
-                onClick = { 
-                     val activity = context.findActivity()
-                     if (activity != null) {
-                         if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || 
-                             activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                         } else {
-                             activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                         }
-                     }
-                },
-                 modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
+            // ── Right: Subtitles (CC), Audio, Exit Fullscreen ──
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.ScreenRotation,
-                    contentDescription = "Rotate",
-                    tint = Color.White
-                )
-            }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(glassColor, glassShape)
+                        .border(1.dp, glassBorder, glassShape)
+                        .clip(glassShape)
+                        .clickable { onShowSubtitles() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ClosedCaption,
+                        contentDescription = "Subtitles",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
-            // Zoom/Fit Toggle
-            IconButton(
-                onClick = onToggleZoom,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Icon(
-                    imageVector = if (videoResizeMode == androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM) Icons.Outlined.Fullscreen else Icons.Outlined.Crop,
-                    contentDescription = "Toggle Zoom",
-                    tint = Color.White
-                )
-            }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(glassColor, glassShape)
+                        .border(1.dp, glassBorder, glassShape)
+                        .clip(glassShape)
+                        .clickable { onShowAudio() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Audiotrack,
+                        contentDescription = "Audio Track",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
 
-            // Speed Toggle
-            IconButton(
-                onClick = onCycleSpeed,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Text(
-                    text = "${activeSpeed}x",
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            // Lock Screen
-            IconButton(
-                onClick = onLockClick,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "Lock Controls",
-                    tint = Color.White
-                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(glassColor, glassShape)
+                        .border(1.dp, glassBorder, glassShape)
+                        .clip(glassShape)
+                        .clickable { onExitFullscreen() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.FullscreenExit,
+                        contentDescription = "Exit Fullscreen",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
-        
+
+        // ══════════════════════════════════════════════
         // CENTER CONTROLS
-        val binder = LocalPlayerServiceBinder.current
+        // ══════════════════════════════════════════════
         if (binder != null) {
             Row(
                 modifier = Modifier.align(Alignment.Center),
-                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = { binder.syncSkipPrevious() },
-                    modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
-                ) {
-                    Icon(imageVector = Icons.Outlined.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(32.dp))
-                }
-                
-                IconButton(
-                    onClick = { if (isPlaying) binder.syncPause() else binder.syncPlay() },
-                    modifier = Modifier.size(80.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+                // Previous
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(glassColor, CircleShape)
+                        .border(1.dp, glassBorder, CircleShape)
+                        .clip(CircleShape)
+                        .clickable { binder.syncSkipPrevious() },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = "Play/Pause", 
-                        tint = Color.White, 
-                        modifier = Modifier.size(40.dp)
+                        imageVector = Icons.Outlined.SkipPrevious,
+                        contentDescription = "Previous",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
                     )
                 }
 
-                IconButton(
-                    onClick = { binder.syncSkipNext() },
-                    modifier = Modifier.size(64.dp).background(Color.Black.copy(alpha = 0.4f), shape = CircleShape)
+                // Play/Pause
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(Color.White.copy(alpha = 0.18f), CircleShape)
+                        .border(1.5.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                        .clip(CircleShape)
+                        .clickable { if (isPlaying) binder.syncPause() else binder.syncPlay() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(imageVector = Icons.Outlined.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(32.dp))
+                    if (isBuffering) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(32.dp),
+                            color = Color.White,
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = "Play/Pause",
+                            tint = Color.White,
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+                }
+
+                // Next
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(glassColor, CircleShape)
+                        .border(1.dp, glassBorder, CircleShape)
+                        .clip(CircleShape)
+                        .clickable { binder.syncSkipNext() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.SkipNext,
+                        contentDescription = "Next",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
+                    )
                 }
             }
         }
 
-        // BOTTOM SEEKBAR
+        // ══════════════════════════════════════════════
+        // BOTTOM SECTION (Actions Row + Seekbar)
+        // ══════════════════════════════════════════════
         Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(bottom = 2.dp)
         ) {
-             Row(
-                 modifier = Modifier.fillMaxWidth(),
-                 horizontalArrangement = Arrangement.SpaceBetween,
-                 verticalAlignment = Alignment.CenterVertically
-             ) {
-                 Text(
-                     text = formatDuration(position),
-                     style = MaterialTheme.typography.labelMedium,
-                     color = Color.White
-                 )
-                 Text(
-                     text = formatDuration(duration),
-                     style = MaterialTheme.typography.labelMedium,
-                     color = Color.White
-                 )
-             }
-             
-             Slider(
-                 value = if (duration > 0) position.toFloat() / duration.toFloat() else 0f,
-                 onValueChange = { ratio ->
-                     binder?.syncSeekTo((ratio * duration).toLong())
-                 },
-                 colors = SliderDefaults.colors(
-                     thumbColor = Color.White,
-                     activeTrackColor = Color.White,
-                     inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                 ),
-                 modifier = Modifier.fillMaxWidth()
-             )
+            // ── Bottom-right action row ──
+            Row(
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isYouTube) {
+                    PlayerControlButton(
+                        text = videoQualityText,
+                        subText = "Quality",
+                        onClick = onShowQuality
+                    )
+                }
+
+                PlayerControlButton(
+                    text = "${activeSpeed}x",
+                    subText = "Speed",
+                    onClick = onCycleSpeed
+                )
+
+                PlayerControlButton(
+                    text = if (videoResizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) "Zoom" else "Fit",
+                    onClick = onToggleZoom
+                )
+
+                PlayerControlButton(
+                    icon = Icons.Rounded.ScreenRotation,
+                    onClick = {
+                        val activity = context.findActivity()
+                        if (activity != null) {
+                            if (activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+                                activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            ) {
+                                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            } else {
+                                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            }
+                        }
+                    }
+                )
+
+                PlayerControlButton(
+                    text = "Lock",
+                    onClick = onLockClick
+                )
+            }
+
+            // ── Seekbar Row: Timestamp | Track | Timestamp ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = formatDuration(position),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.9f)
+                )
+
+                val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
+
+                // Sleek thin Canvas seekbar
+                androidx.compose.foundation.Canvas(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(20.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures { offset ->
+                                val ratio = (offset.x / size.width).coerceIn(0f, 1f)
+                                binder?.syncSeekTo((ratio * duration).toLong())
+                            }
+                        }
+                ) {
+                    val trackY = center.y
+                    val trackHeight = 2.dp.toPx()
+                    val thumbRadius = 5.dp.toPx()
+                    val progressX = progress * size.width
+
+                    // Background track
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.3f),
+                        start = androidx.compose.ui.geometry.Offset(0f, trackY),
+                        end = androidx.compose.ui.geometry.Offset(size.width, trackY),
+                        strokeWidth = trackHeight,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+
+                    // Active (played) track
+                    if (progressX > 0f) {
+                        drawLine(
+                            color = accentRed,
+                            start = androidx.compose.ui.geometry.Offset(0f, trackY),
+                            end = androidx.compose.ui.geometry.Offset(progressX, trackY),
+                            strokeWidth = trackHeight,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                    }
+
+                    // Thumb dot
+                    drawCircle(
+                        color = accentRed,
+                        radius = thumbRadius,
+                        center = androidx.compose.ui.geometry.Offset(
+                            progressX.coerceIn(thumbRadius, size.width - thumbRadius),
+                            trackY
+                        )
+                    )
+                }
+
+                Text(
+                    text = formatDuration(duration),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.9f)
+                )
+            }
         }
     }
 }
@@ -2020,6 +2457,62 @@ fun ManualMatchOverlay(
             ) {
                 Text("Cancel", color = Color.White)
             }
+        }
+    }
+}
+
+@Composable
+fun PlayerControlButton(
+    text: String = "",
+    subText: String? = null,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val glassColor = Color.White.copy(alpha = 0.12f)
+    val glassBorder = Color.White.copy(alpha = 0.2f)
+    val pillShape = RoundedCornerShape(16.dp)
+    
+    Box(
+        modifier = modifier
+            .size(if (icon != null && text.isEmpty()) 44.dp else 64.dp, 44.dp)
+            .background(glassColor, pillShape)
+            .border(1.dp, glassBorder, pillShape)
+            .clip(pillShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (icon != null && text.isEmpty()) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        } else if (subText != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = text,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+                Text(
+                    text = subText,
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Normal
+                )
+            }
+        } else {
+            Text(
+                text = text,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp
+            )
         }
     }
 }

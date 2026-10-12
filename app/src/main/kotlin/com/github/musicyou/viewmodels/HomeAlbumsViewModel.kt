@@ -31,11 +31,9 @@ class HomeAlbumsViewModel : ViewModel() {
             try {
                 val page = Innertube.albumPage(album.id)?.getOrNull()
                 val thumbnailUrl = page?.thumbnail?.url
-                println("MUSICA-LOG: Fetched album ${album.title} (${album.id}) - thumbnail: $thumbnailUrl")
                 if (thumbnailUrl != null) {
                     Database.update(album.copy(thumbnailUrl = thumbnailUrl))
                 } else {
-                    println("MUSICA-LOG: Thumbnail was null for album ${album.title}. Page title: ${page?.title}")
                     Database.update(album.copy(thumbnailUrl = ""))
                 }
             } catch (e: Exception) {

@@ -102,19 +102,20 @@ class ExoPlayerPlaybackEngine(
             if (mediaId.startsWith("content://") || mediaId.startsWith("file://")) {
                 android.util.Log.d("MusicSyncFlow", "ExoEngine: Skipping metadata lookup for local file: $mediaId")
             } else {
-                // 1. Resolve Metadata (Always try to get rich metadata)
+                val realMediaId = if (mediaId.startsWith("youtube-video:")) mediaId.removePrefix("youtube-video:") else mediaId
+                
                 // Check Database first
-                val dbSong = Database.song(mediaId).firstOrNull()
+                val dbSong = Database.song(realMediaId).firstOrNull()
                 if (dbSong != null) {
-                     android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in DB for $mediaId - ${dbSong.title}")
+                     android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in DB for $realMediaId - ${dbSong.title}")
                      validMetadataItem = dbSong.asMediaItem
                 } else {
                     // Fallback to Innertube API
                     try {
-                        val result = Innertube.song(mediaId)
+                        val result = Innertube.song(realMediaId)
                         val songItem = result?.getOrNull()
                         if (songItem != null) {
-                            android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in Innertube for $mediaId - ${songItem.info?.name}")
+                            android.util.Log.d("MusicSyncFlow", "ExoEngine: Found metadata in Innertube for $realMediaId - ${songItem.info?.name}")
                             validMetadataItem = songItem.asMediaItem
                         }
                     } catch (e: Exception) {
@@ -143,8 +144,8 @@ class ExoPlayerPlaybackEngine(
                 }
             } else {
                 // No custom URI, use the resolved metadata item (or fallback to basic if null)
-                validMetadataItem ?: MediaItem.Builder()
-                    .setUri(mediaId)
+                validMetadataItem?.buildUpon()?.setMediaId(mediaId)?.build() ?: MediaItem.Builder()
+                    .setUri(mediaId.removePrefix("youtube-video:"))
                     .setMediaId(mediaId)
                     .setCustomCacheKey(mediaId)
                     .build()
@@ -270,7 +271,7 @@ class ExoPlayerPlaybackEngine(
                 PlaybackState(
                     mediaId = player.currentMediaItem?.mediaId,
                     mediaItem = player.currentMediaItem,
-                    isPlaying = player.isPlaying,
+                    isPlaying = player.playWhenReady,
                     playbackState = mapExoState(player.playbackState),
                     currentPositionMs = player.currentPosition,
                     bufferedPositionMs = player.bufferedPosition,

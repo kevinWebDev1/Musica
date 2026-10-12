@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.DragHandle
 import androidx.compose.material.icons.outlined.PlaylistRemove
 import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -48,6 +49,8 @@ import com.github.musicyou.models.SongPlaylistMap
 import com.github.musicyou.query
 import com.github.musicyou.transaction
 import com.github.musicyou.ui.components.CoverScaffold
+import com.github.musicyou.ui.components.EmptyPlaceholder
+import com.github.musicyou.ui.components.EmptyPlaceholder
 import com.github.musicyou.ui.components.PlaylistThumbnail
 import com.github.musicyou.ui.components.SwipeToActionBox
 import com.github.musicyou.ui.components.InPlaylistMediaItemMenu
@@ -165,6 +168,15 @@ fun LocalPlaylistSongs(
 
             item(key = "spacer") {
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (playlistSongs.isEmpty()) {
+                item(key = "empty_state") {
+                    EmptyPlaceholder(
+                        icon = Icons.Outlined.MusicNote,
+                        text = "Playlist is empty"
+                    )
+                }
             }
 
             itemsIndexed(
